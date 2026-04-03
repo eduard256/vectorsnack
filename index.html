@@ -1077,6 +1077,7 @@ async function handleFile(file) {
 
 // ==============================
 // PDF/AI to SVG via pdf.js SVGGraphics (2.16.105 has it built in)
+// Returns either an SVG string or a DOM element (handled by loadSvg)
 // ==============================
 async function convertPdfToSvg(file) {
   if (!pdfjsLib) throw new Error('PDF.js not loaded.');
@@ -1085,25 +1086,53 @@ async function convertPdfToSvg(file) {
   var page = await pdf.getPage(1);
   var vp = page.getViewport({ scale: 1 });
 
-  // pdf.js 2.x SVGGraphics
+  // pdf.js 2.x SVGGraphics -- returns a real SVG DOM element
   if (pdfjsLib.SVGGraphics) {
     try {
       var opList = await page.getOperatorList();
       var svgGfx = new pdfjsLib.SVGGraphics(page.commonObjs, page.objs);
       svgGfx.embedFonts = true;
       var svgEl = await svgGfx.getSVG(opList, vp);
-      var serializer = new XMLSerializer();
-      var svgStr = serializer.serializeToString(svgEl);
-      if (svgStr.indexOf('xmlns="http://www.w3.org/2000/svg"') === -1) {
-        svgStr = svgStr.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+
+      // svgEl is a live SVG DOM element -- serialize it properly
+      // Ensure it has proper SVG namespace
+      if (svgEl && svgEl.tagName) {
+        console.log('SVGGraphics produced element:', svgEl.tagName, 'children:', svgEl.children.length);
+
+        // If the returned element is an svg:svg element, serialize and return
+        var tagLower = svgEl.tagName.toLowerCase();
+        if (tagLower === 'svg' || tagLower === 'svg:svg') {
+          // Ensure xmlns is set
+          svgEl.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+          // Ensure viewBox and dimensions
+          if (!svgEl.getAttribute('viewBox')) {
+            svgEl.setAttribute('viewBox', '0 0 ' + rd(vp.width) + ' ' + rd(vp.height));
+          }
+          if (!svgEl.getAttribute('width')) svgEl.setAttribute('width', rd(vp.width));
+          if (!svgEl.getAttribute('height')) svgEl.setAttribute('height', rd(vp.height));
+
+          var serializer = new XMLSerializer();
+          var svgStr = serializer.serializeToString(svgEl);
+
+          // Fix common serialization issues
+          if (svgStr.indexOf('xmlns="http://www.w3.org/2000/svg"') === -1) {
+            svgStr = svgStr.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+          }
+          // Remove any xml declaration
+          svgStr = svgStr.replace(/<\?xml[^?]*\?>/, '');
+
+          console.log('SVG string length:', svgStr.length, 'starts with:', svgStr.substring(0, 100));
+          return svgStr;
+        }
       }
-      return svgStr;
+      console.warn('SVGGraphics returned unexpected element:', svgEl);
     } catch (err) {
       console.warn('SVGGraphics failed, using canvas fallback:', err);
     }
   }
 
   // Fallback: high-DPI canvas render embedded in SVG
+  console.log('Using canvas fallback for PDF/AI');
   var scale = 3;
   var scaledVp = page.getViewport({ scale: scale });
   var canvas = document.createElement('canvas');
@@ -1166,7 +1195,29 @@ function loadSvg(svgText, fileName) {
   var parser = new DOMParser();
   var doc = parser.parseFromString(svgText, 'image/svg+xml');
   var svgEl = doc.querySelector('svg');
-  if (!svgEl) { showToast('Invalid SVG data'); return; }
+
+  // Check for parse errors (DOMParser returns parsererror for invalid XML)
+  var parseError = doc.querySelector('parsererror');
+  if (parseError) {
+    console.error('SVG parse error:', parseError.textContent);
+    // Try to fix common issues: missing xmlns, invalid XML chars
+    var fixed = svgText;
+    if (fixed.indexOf('xmlns=') === -1) {
+      fixed = fixed.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+    }
+    // Remove null bytes and invalid XML characters
+    fixed = fixed.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+    doc = parser.parseFromString(fixed, 'image/svg+xml');
+    svgEl = doc.querySelector('svg');
+  }
+
+  if (!svgEl) {
+    // Last resort: try text/html parser which is more lenient
+    doc = parser.parseFromString('<div>' + svgText + '</div>', 'text/html');
+    svgEl = doc.querySelector('svg');
+  }
+
+  if (!svgEl) { showToast('Could not parse file as SVG'); console.error('Failed to parse SVG. First 500 chars:', svgText.substring(0, 500)); return; }
   svgEl.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   currentSvgDoc = svgEl;
   while (viewport.firstChild) viewport.removeChild(viewport.firstChild);
