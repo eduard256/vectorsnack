@@ -623,7 +623,7 @@
 
   .selection-preview svg {
     max-width: 100%;
-    max-height: 100px;
+    max-height: 180px;
   }
 
   .selection-meta {
@@ -1409,30 +1409,94 @@ function getUniqueTypes(els) {
 function generateSelectionSvg(elements) {
   if (elements.length === 0) return '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
 
-  var serializer = new XMLSerializer();
   var svgRoot = viewport.querySelector('svg');
+  var serializer = new XMLSerializer();
 
-  // Compute combined bounding box
+  // Strategy: clone the entire SVG, then remove everything that is NOT
+  // a selected element or an ancestor/dependency of one.
+  // This preserves clip-paths, masks, gradients, transforms, and group hierarchy.
+  var svgClone = svgRoot.cloneNode(true);
+
+  // Build a set of "keeper" original elements
+  var keepSet = new Set();
+  for (var i = 0; i < elements.length; i++) keepSet.add(elements[i]);
+
+  // Map from original elements to their cloned counterparts by tree position.
+  // We walk both trees in sync to build the mapping.
+  var allOriginal = svgRoot.querySelectorAll('.svg-element-interactive');
+  var allCloned = svgClone.querySelectorAll('.svg-element-interactive');
+
+  // Mark cloned elements: remove those not selected
+  var keepCloned = new Set();
+  for (var j = 0; j < allOriginal.length; j++) {
+    if (keepSet.has(allOriginal[j])) {
+      keepCloned.add(allCloned[j]);
+    }
+  }
+
+  // Remove non-selected interactive elements from the clone
+  for (var k = allCloned.length - 1; k >= 0; k--) {
+    if (!keepCloned.has(allCloned[k])) {
+      allCloned[k].remove();
+    }
+  }
+
+  // Clean up empty groups (groups that no longer have any visible children)
+  var changed = true;
+  while (changed) {
+    changed = false;
+    var groups = svgClone.querySelectorAll('g');
+    for (var g = groups.length - 1; g >= 0; g--) {
+      var grp = groups[g];
+      // Keep group if it has child elements (excluding empty text nodes)
+      if (grp.children.length === 0) {
+        grp.remove();
+        changed = true;
+      }
+    }
+  }
+
+  // Clean interactive classes from remaining elements
+  var remaining = svgClone.querySelectorAll('.svg-element-interactive, .element-highlight-selected, .element-highlight-hover');
+  for (var r = 0; r < remaining.length; r++) {
+    remaining[r].classList.remove('svg-element-interactive', 'element-highlight-selected', 'element-highlight-hover');
+    if (remaining[r].getAttribute('class') === '') remaining[r].removeAttribute('class');
+  }
+
+  // Compute tight viewBox from remaining visible elements
+  // Temporarily insert into document to get bounding boxes
+  var tempContainer = document.createElement('div');
+  tempContainer.style.cssText = 'position:fixed;left:-9999px;top:-9999px;visibility:hidden;';
+  document.body.appendChild(tempContainer);
+  tempContainer.appendChild(svgClone);
+
+  var visibleEls = svgClone.querySelectorAll('path, rect, circle, ellipse, polygon, polyline, line, text, image, use');
   var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (var i = 0; i < elements.length; i++) {
+  for (var v = 0; v < visibleEls.length; v++) {
     try {
-      var bbox = elements[i].getBBox();
-      // Account for parent transforms to get true coordinates
-      var ctm = elements[i].getCTM();
-      var svgCtm = svgRoot.getCTM();
-      if (ctm && svgCtm) {
-        // Transform all 4 corners of bbox
-        var pts = [
-          transformPoint(bbox.x, bbox.y, ctm, svgCtm),
-          transformPoint(bbox.x + bbox.width, bbox.y, ctm, svgCtm),
-          transformPoint(bbox.x, bbox.y + bbox.height, ctm, svgCtm),
-          transformPoint(bbox.x + bbox.width, bbox.y + bbox.height, ctm, svgCtm)
+      var bbox = visibleEls[v].getBBox();
+      if (bbox.width === 0 && bbox.height === 0) continue;
+      // Walk up parent transforms
+      var el = visibleEls[v];
+      var ctm = el.getCTM();
+      var svgCtm2 = svgClone.getCTM();
+      if (ctm && svgCtm2) {
+        var inv = svgCtm2.inverse();
+        var m = inv.multiply(ctm);
+        // Transform all 4 corners
+        var corners = [
+          { x: bbox.x, y: bbox.y },
+          { x: bbox.x + bbox.width, y: bbox.y },
+          { x: bbox.x, y: bbox.y + bbox.height },
+          { x: bbox.x + bbox.width, y: bbox.y + bbox.height }
         ];
-        for (var p = 0; p < pts.length; p++) {
-          if (pts[p].x < minX) minX = pts[p].x;
-          if (pts[p].y < minY) minY = pts[p].y;
-          if (pts[p].x > maxX) maxX = pts[p].x;
-          if (pts[p].y > maxY) maxY = pts[p].y;
+        for (var c = 0; c < corners.length; c++) {
+          var tx = m.a * corners[c].x + m.c * corners[c].y + m.e;
+          var ty = m.b * corners[c].x + m.d * corners[c].y + m.f;
+          if (tx < minX) minX = tx;
+          if (ty < minY) minY = ty;
+          if (tx > maxX) maxX = tx;
+          if (ty > maxY) maxY = ty;
         }
       } else {
         if (bbox.x < minX) minX = bbox.x;
@@ -1443,46 +1507,21 @@ function generateSelectionSvg(elements) {
     } catch (e) {}
   }
 
-  var padding = Math.max(maxX - minX, maxY - minY) * 0.05;
-  if (!isFinite(padding) || padding < 1) padding = 5;
-  var vbX = rd(minX - padding);
-  var vbY = rd(minY - padding);
-  var vbW = rd((maxX - minX) + padding * 2);
-  var vbH = rd((maxY - minY) + padding * 2);
+  document.body.removeChild(tempContainer);
 
-  // Collect defs
-  var defs = svgRoot ? svgRoot.querySelector('defs') : null;
-  var defsStr = defs ? serializer.serializeToString(defs) : '';
-
-  // Clone elements with their parent transforms
-  var inner = '';
-  for (var j = 0; j < elements.length; j++) {
-    var clone = elements[j].cloneNode(true);
-    clone.classList.remove('svg-element-interactive', 'element-highlight-hover', 'element-highlight-selected');
-    var cloneStr = serializer.serializeToString(clone);
-
-    // Collect transforms from parent groups
-    var transforms = [];
-    var parent = elements[j].parentElement;
-    while (parent && parent.tagName && parent.tagName.toLowerCase() !== 'svg') {
-      var t = parent.getAttribute('transform');
-      if (t) transforms.unshift(t);
-      parent = parent.parentElement;
-    }
-    if (transforms.length > 0) {
-      cloneStr = '<g transform="' + transforms.join(' ') + '">' + cloneStr + '</g>';
-    }
-    inner += cloneStr;
+  // Set tight viewBox with small padding
+  var pad = Math.max(maxX - minX, maxY - minY) * 0.03;
+  if (!isFinite(pad) || pad < 1) pad = 2;
+  if (isFinite(minX)) {
+    svgClone.setAttribute('viewBox', rd(minX - pad) + ' ' + rd(minY - pad) + ' ' + rd(maxX - minX + pad * 2) + ' ' + rd(maxY - minY + pad * 2));
   }
+  svgClone.removeAttribute('width');
+  svgClone.removeAttribute('height');
+  svgClone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
 
-  return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="' + vbX + ' ' + vbY + ' ' + vbW + ' ' + vbH + '">' + defsStr + inner + '</svg>';
-}
-
-function transformPoint(x, y, ctm, svgCtm) {
-  // Get element position in SVG coordinate system
-  var invSvgCtm = svgCtm.inverse();
-  var combined = invSvgCtm.multiply(ctm);
-  return { x: combined.a * x + combined.c * y + combined.e, y: combined.b * x + combined.d * y + combined.f };
+  var result = serializer.serializeToString(svgClone);
+  result = result.replace(/<\?xml[^?]*\?>/, '');
+  return result;
 }
 
 // ==============================
