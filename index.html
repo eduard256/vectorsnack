@@ -1,0 +1,1923 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VectorSnack -- Grab vector pieces</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg-primary: #0a0a0b;
+    --bg-secondary: #111113;
+    --bg-tertiary: #1a1a1e;
+    --bg-hover: #222228;
+    --surface: #16161a;
+    --border: #2a2a30;
+    --border-active: #ff4d00;
+    --text-primary: #e8e6e3;
+    --text-secondary: #8a8a8e;
+    --text-muted: #555558;
+    --accent: #ff4d00;
+    --accent-glow: rgba(255, 77, 0, 0.3);
+    --accent-secondary: #00e5a0;
+    --accent-secondary-glow: rgba(0, 229, 160, 0.25);
+    --danger: #ff2d55;
+    --warning: #ffb800;
+    --font-display: 'Instrument Serif', Georgia, serif;
+    --font-mono: 'Space Mono', 'Courier New', monospace;
+    --radius: 4px;
+    --transition: 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  html, body {
+    height: 100%;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Noise texture overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    opacity: 0.03;
+    pointer-events: none;
+    z-index: 9999;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-size: 256px;
+  }
+
+  ::selection {
+    background: var(--accent);
+    color: var(--bg-primary);
+  }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+  /* ===== LAYOUT ===== */
+  .app {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    grid-template-columns: 280px 1fr;
+    height: 100vh;
+    gap: 0;
+  }
+
+  /* ===== HEADER ===== */
+  .header {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-secondary);
+    position: relative;
+    z-index: 10;
+  }
+
+  .header::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    opacity: 0.4;
+  }
+
+  .logo {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+
+  .logo-mark {
+    width: 28px;
+    height: 28px;
+    position: relative;
+    top: 4px;
+  }
+
+  .logo h1 {
+    font-family: var(--font-display);
+    font-size: 26px;
+    font-weight: 400;
+    letter-spacing: -0.5px;
+    color: var(--text-primary);
+  }
+
+  .logo h1 em {
+    color: var(--accent);
+    font-style: italic;
+  }
+
+  .logo-tagline {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* ===== BUTTONS ===== */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all var(--transition);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    white-space: nowrap;
+  }
+
+  .btn:hover {
+    border-color: var(--text-muted);
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+
+  .btn--accent {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(255, 77, 0, 0.08);
+  }
+
+  .btn--accent:hover {
+    background: rgba(255, 77, 0, 0.15);
+    box-shadow: 0 0 20px var(--accent-glow);
+  }
+
+  .btn--success {
+    border-color: var(--accent-secondary);
+    color: var(--accent-secondary);
+    background: rgba(0, 229, 160, 0.08);
+  }
+
+  .btn--success:hover {
+    background: rgba(0, 229, 160, 0.15);
+    box-shadow: 0 0 20px var(--accent-secondary-glow);
+  }
+
+  .btn svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+  }
+
+  /* ===== SIDEBAR ===== */
+  .sidebar {
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .sidebar-section {
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sidebar-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    cursor: pointer;
+    user-select: none;
+    transition: background var(--transition);
+  }
+
+  .sidebar-section-header:hover {
+    background: var(--bg-tertiary);
+  }
+
+  .sidebar-section-title {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--text-muted);
+  }
+
+  .sidebar-section-count {
+    font-size: 10px;
+    color: var(--text-muted);
+    background: var(--bg-tertiary);
+    padding: 1px 6px;
+    border-radius: 2px;
+  }
+
+  .layer-tree {
+    overflow-y: auto;
+    flex: 1;
+  }
+
+  .layer-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 16px;
+    cursor: pointer;
+    transition: all var(--transition);
+    border-left: 2px solid transparent;
+    position: relative;
+  }
+
+  .layer-item:hover {
+    background: var(--bg-tertiary);
+  }
+
+  .layer-item.selected {
+    background: rgba(255, 77, 0, 0.06);
+    border-left-color: var(--accent);
+  }
+
+  .layer-item.hovered {
+    background: rgba(255, 77, 0, 0.04);
+  }
+
+  .layer-item--group {
+    font-weight: 700;
+  }
+
+  .layer-item--child {
+    padding-left: 32px;
+  }
+
+  .layer-item--child::before {
+    content: '';
+    position: absolute;
+    left: 24px;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--border);
+  }
+
+  .layer-toggle {
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    transition: transform var(--transition);
+    flex-shrink: 0;
+  }
+
+  .layer-toggle.expanded {
+    transform: rotate(90deg);
+  }
+
+  .layer-toggle svg {
+    width: 10px;
+    height: 10px;
+  }
+
+  .layer-name {
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+  }
+
+  .layer-item.selected .layer-name {
+    color: var(--accent);
+  }
+
+  .layer-type {
+    font-size: 9px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    flex-shrink: 0;
+  }
+
+  /* ===== MAIN CANVAS ===== */
+  .main {
+    background: var(--bg-primary);
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .canvas-container {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+  }
+
+  .canvas-viewport {
+    position: absolute;
+    transform-origin: 0 0;
+    cursor: grab;
+  }
+
+  .canvas-viewport:active {
+    cursor: grabbing;
+  }
+
+  .canvas-viewport svg {
+    display: block;
+  }
+
+  /* Grid pattern */
+  .canvas-grid {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.08;
+    background-image:
+      linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+
+  /* ===== DROPZONE ===== */
+  .dropzone {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 5;
+    transition: opacity 0.3s ease;
+  }
+
+  .dropzone.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .dropzone-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 24px;
+    padding: 60px 80px;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    position: relative;
+    transition: all 0.3s ease;
+  }
+
+  .dropzone.drag-over .dropzone-inner {
+    border-color: var(--accent);
+    background: rgba(255, 77, 0, 0.03);
+    box-shadow: 0 0 60px rgba(255, 77, 0, 0.08);
+  }
+
+  .dropzone-icon {
+    width: 64px;
+    height: 64px;
+    color: var(--text-muted);
+    transition: all 0.3s ease;
+  }
+
+  .dropzone.drag-over .dropzone-icon {
+    color: var(--accent);
+    transform: scale(1.1);
+  }
+
+  .dropzone-title {
+    font-family: var(--font-display);
+    font-size: 32px;
+    color: var(--text-secondary);
+    font-style: italic;
+  }
+
+  .dropzone-subtitle {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+  }
+
+  .dropzone-formats {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .format-badge {
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--text-muted);
+    transition: all var(--transition);
+  }
+
+  .dropzone.drag-over .format-badge {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* ===== ELEMENT HOVER/SELECT OVERLAYS ===== */
+  .svg-element-interactive {
+    cursor: pointer;
+    transition: filter 0.1s ease;
+  }
+
+  .svg-element-interactive:hover {
+    filter: drop-shadow(0 0 3px var(--accent));
+  }
+
+  .element-highlight-hover {
+    outline: 1.5px dashed rgba(255, 77, 0, 0.5);
+    outline-offset: 2px;
+  }
+
+  .element-highlight-selected {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    filter: drop-shadow(0 0 6px var(--accent-glow));
+  }
+
+  /* ===== BOTTOM BAR ===== */
+  .bottombar {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    z-index: 10;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    backdrop-filter: blur(10px);
+  }
+
+  .bottombar .zoom-display {
+    font-size: 11px;
+    color: var(--text-muted);
+    min-width: 40px;
+    text-align: center;
+  }
+
+  .bottombar .divider {
+    width: 1px;
+    height: 20px;
+    background: var(--border);
+  }
+
+  .file-info {
+    font-size: 11px;
+    color: var(--text-muted);
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ===== TOAST NOTIFICATION ===== */
+  .toast {
+    position: fixed;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    padding: 10px 20px;
+    background: var(--accent-secondary);
+    color: var(--bg-primary);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 700;
+    border-radius: var(--radius);
+    z-index: 100;
+    opacity: 0;
+    pointer-events: none;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  /* ===== SELECTION PANEL (right top) ===== */
+  .selection-panel {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 260px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    z-index: 10;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    display: none;
+    overflow: hidden;
+  }
+
+  .selection-panel.visible {
+    display: block;
+    animation: panelIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @keyframes panelIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .selection-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .selection-panel-title {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--text-muted);
+  }
+
+  .selection-panel-close {
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--text-muted);
+    transition: color var(--transition);
+    background: none;
+    border: none;
+  }
+
+  .selection-panel-close:hover {
+    color: var(--text-primary);
+  }
+
+  .selection-panel-body {
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .selection-preview {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 120px;
+  }
+
+  .selection-preview svg {
+    max-width: 100%;
+    max-height: 100px;
+  }
+
+  .selection-meta {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+
+  .selection-meta-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .selection-meta-label {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+  }
+
+  .selection-meta-value {
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+
+  .selection-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  .selection-actions .btn {
+    flex: 1;
+    justify-content: center;
+  }
+
+  /* ===== SVG CODE MODAL ===== */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    z-index: 50;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(4px);
+  }
+
+  .modal-overlay.visible {
+    display: flex;
+    animation: fadeIn 0.2s ease;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .modal {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    width: 90%;
+    max-width: 700px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.5);
+    animation: modalIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @keyframes modalIn {
+    from { opacity: 0; transform: scale(0.95) translateY(10px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+  }
+
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .modal-title {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--text-muted);
+  }
+
+  .modal-body {
+    padding: 18px;
+    overflow-y: auto;
+    flex: 1;
+  }
+
+  .code-block {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 400px;
+    overflow-y: auto;
+  }
+
+  .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 14px 18px;
+    border-top: 1px solid var(--border);
+  }
+
+  /* ===== LOADING ===== */
+  .loading-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(10, 10, 11, 0.85);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 16px;
+    z-index: 20;
+  }
+
+  .loading-overlay.visible {
+    display: flex;
+  }
+
+  .spinner {
+    width: 32px;
+    height: 32px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .loading-text {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+  }
+
+  /* ===== RESPONSIVE ===== */
+  @media (max-width: 768px) {
+    .app {
+      grid-template-columns: 1fr;
+    }
+    .sidebar {
+      display: none;
+    }
+    .header .logo-tagline {
+      display: none;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- HEADER -->
+  <header class="header">
+    <div class="logo">
+      <svg class="logo-mark" viewBox="0 0 32 32" fill="none">
+        <rect x="2" y="2" width="28" height="28" rx="4" stroke="currentColor" stroke-width="1.5" fill="none"/>
+        <path d="M8 22 L16 8 L24 22 Z" stroke="#ff4d00" stroke-width="1.5" fill="none"/>
+        <circle cx="16" cy="16" r="3" fill="#ff4d00" opacity="0.6"/>
+        <line x1="8" y1="16" x2="24" y2="16" stroke="#ff4d00" stroke-width="0.5" opacity="0.4"/>
+      </svg>
+      <h1>Vector<em>Snack</em></h1>
+      <span class="logo-tagline">Slice & grab vectors</span>
+    </div>
+    <div class="header-actions">
+      <input type="file" id="fileInput" accept=".svg,.ai,.eps,.pdf" multiple style="display:none">
+      <button class="btn btn--accent" id="btnLoadFile">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2v12M2 8h12"/></svg>
+        Load file
+      </button>
+      <button class="btn" id="btnClearAll" style="display:none">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+        Clear
+      </button>
+    </div>
+  </header>
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-section-header">
+        <span class="sidebar-section-title">Layers</span>
+        <span class="sidebar-section-count" id="layerCount">0</span>
+      </div>
+    </div>
+    <div class="layer-tree" id="layerTree">
+      <div style="padding: 20px 16px; text-align: center;">
+        <p style="color: var(--text-muted); font-size: 11px; line-height: 1.6;">
+          Load a vector file<br>to see layers here
+        </p>
+      </div>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main" id="mainArea">
+    <div class="canvas-grid"></div>
+
+    <!-- Dropzone -->
+    <div class="dropzone" id="dropzone">
+      <div class="dropzone-inner">
+        <svg class="dropzone-icon" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="8" y="8" width="48" height="48" rx="6"/>
+          <path d="M32 20v24M20 32h24" stroke-width="2"/>
+          <path d="M20 44l8-10 6 6 8-12 10 16" opacity="0.4"/>
+        </svg>
+        <div class="dropzone-title">Drop vectors here</div>
+        <div class="dropzone-subtitle">or click Load File above</div>
+        <div class="dropzone-formats">
+          <span class="format-badge">.svg</span>
+          <span class="format-badge">.ai</span>
+          <span class="format-badge">.eps</span>
+          <span class="format-badge">.pdf</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Canvas -->
+    <div class="canvas-container" id="canvasContainer" style="display:none">
+      <div class="canvas-viewport" id="canvasViewport"></div>
+    </div>
+
+    <!-- Selection Panel -->
+    <div class="selection-panel" id="selectionPanel">
+      <div class="selection-panel-header">
+        <span class="selection-panel-title">Selected element</span>
+        <button class="selection-panel-close" id="btnDeselectPanel">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="12" height="12"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+        </button>
+      </div>
+      <div class="selection-panel-body">
+        <div class="selection-preview" id="selectionPreview"></div>
+        <div class="selection-meta" id="selectionMeta"></div>
+        <div class="selection-actions">
+          <button class="btn btn--success" id="btnCopySvg">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="9" height="9" rx="1"/><path d="M5 11H3.5A1.5 1.5 0 012 9.5v-7A1.5 1.5 0 013.5 1h7A1.5 1.5 0 0112 2.5V5"/></svg>
+            Copy SVG
+          </button>
+          <button class="btn" id="btnShowCode">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 4L1 8l4 4M11 4l4 4-4 4"/></svg>
+            Code
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom bar -->
+    <div class="bottombar" id="bottombar" style="display:none">
+      <button class="btn" id="btnZoomIn" title="Zoom in">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="14" height="14"><circle cx="7" cy="7" r="5"/><path d="M11 11l3 3"/><path d="M5 7h4M7 5v4"/></svg>
+      </button>
+      <span class="zoom-display" id="zoomDisplay">100%</span>
+      <button class="btn" id="btnZoomOut" title="Zoom out">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="14" height="14"><circle cx="7" cy="7" r="5"/><path d="M11 11l3 3"/><path d="M5 7h4"/></svg>
+      </button>
+      <button class="btn" id="btnFitView" title="Fit to view">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="14" height="14"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg>
+      </button>
+      <div class="divider"></div>
+      <span class="file-info" id="fileInfo"></span>
+    </div>
+
+    <!-- Loading overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+      <div class="spinner"></div>
+      <div class="loading-text">Processing file...</div>
+    </div>
+  </main>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- SVG Code Modal -->
+<div class="modal-overlay" id="codeModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Optimized SVG Code</span>
+      <button class="selection-panel-close" id="btnCloseModal">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="12" height="12"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="code-block" id="codeContent"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn--success" id="btnCopyFromModal">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="9" height="9" rx="1"/><path d="M5 11H3.5A1.5 1.5 0 012 9.5v-7A1.5 1.5 0 013.5 1h7A1.5 1.5 0 0112 2.5V5"/></svg>
+        Copy to clipboard
+      </button>
+      <button class="btn" id="btnCloseModalFooter">Close</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+// ==============================
+// PDF.js setup
+// ==============================
+let pdfjsLib = null;
+
+async function initPdfJs() {
+  try {
+    pdfjsLib = await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs';
+  } catch (e) {
+    console.warn('PDF.js failed to load, PDF/AI support disabled:', e);
+  }
+}
+
+initPdfJs();
+
+// ==============================
+// State
+// ==============================
+let currentSvgDoc = null;
+let selectedElement = null;
+let hoveredElement = null;
+let zoom = 1;
+let panX = 0, panY = 0;
+let isPanning = false;
+let panStartX, panStartY;
+
+// ==============================
+// DOM references
+// ==============================
+const viewport = document.getElementById('canvasViewport');
+const container = document.getElementById('canvasContainer');
+const dropzone = document.getElementById('dropzone');
+const layerTree = document.getElementById('layerTree');
+const layerCountEl = document.getElementById('layerCount');
+const selectionPanel = document.getElementById('selectionPanel');
+const toastEl = document.getElementById('toast');
+const bottombar = document.getElementById('bottombar');
+const loadingOverlay = document.getElementById('loadingOverlay');
+const fileInput = document.getElementById('fileInput');
+const mainArea = document.getElementById('mainArea');
+const codeModal = document.getElementById('codeModal');
+const codeContent = document.getElementById('codeContent');
+const selectionPreview = document.getElementById('selectionPreview');
+const selectionMeta = document.getElementById('selectionMeta');
+
+// ==============================
+// Event bindings via addEventListener (no inline handlers)
+// ==============================
+document.getElementById('btnLoadFile').addEventListener('click', () => fileInput.click());
+document.getElementById('btnClearAll').addEventListener('click', clearAll);
+document.getElementById('btnDeselectPanel').addEventListener('click', deselectElement);
+document.getElementById('btnCopySvg').addEventListener('click', copySelectedSVG);
+document.getElementById('btnShowCode').addEventListener('click', showSVGCode);
+document.getElementById('btnCopyFromModal').addEventListener('click', copyFromModal);
+document.getElementById('btnCloseModal').addEventListener('click', closeModal);
+document.getElementById('btnCloseModalFooter').addEventListener('click', closeModal);
+document.getElementById('btnZoomIn').addEventListener('click', zoomIn);
+document.getElementById('btnZoomOut').addEventListener('click', zoomOut);
+document.getElementById('btnFitView').addEventListener('click', fitToView);
+
+fileInput.addEventListener('change', (e) => {
+  if (e.target.files.length > 0) handleFile(e.target.files[0]);
+});
+
+// Drag & drop
+mainArea.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  dropzone.classList.add('drag-over');
+});
+mainArea.addEventListener('dragleave', (e) => {
+  if (!mainArea.contains(e.relatedTarget)) {
+    dropzone.classList.remove('drag-over');
+  }
+});
+mainArea.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropzone.classList.remove('drag-over');
+  if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
+});
+
+// Close modal on overlay click
+codeModal.addEventListener('click', (e) => {
+  if (e.target === codeModal) closeModal();
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    closeModal();
+    if (selectedElement) deselectElement();
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'c' && selectedElement) {
+    e.preventDefault();
+    copySelectedSVG();
+  }
+  if (e.key === 'Delete' && selectedElement) deselectElement();
+  if (e.key === '+' || e.key === '=') zoomIn();
+  if (e.key === '-') zoomOut();
+  if (e.key === '0') fitToView();
+});
+
+// Window resize
+window.addEventListener('resize', () => {
+  if (currentSvgDoc) fitToView();
+});
+
+// ==============================
+// File handling
+// ==============================
+async function handleFile(file) {
+  const ext = file.name.split('.').pop().toLowerCase();
+  showLoading(true);
+
+  try {
+    let svgText;
+
+    if (ext === 'svg') {
+      svgText = await file.text();
+    } else if (ext === 'ai' || ext === 'pdf') {
+      svgText = await convertPdfToSvg(file);
+    } else if (ext === 'eps') {
+      svgText = await convertEpsToSvg(file);
+    } else {
+      showToast('Unsupported format');
+      showLoading(false);
+      return;
+    }
+
+    if (svgText) {
+      loadSvg(svgText, file.name);
+    }
+  } catch (err) {
+    console.error('File processing error:', err);
+    showToast('Error: ' + err.message);
+  }
+
+  showLoading(false);
+}
+
+// ==============================
+// PDF/AI to SVG conversion
+// ==============================
+async function convertPdfToSvg(file) {
+  if (!pdfjsLib) {
+    throw new Error('PDF.js not loaded. PDF/AI files need PDF.js library.');
+  }
+
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const page = await pdf.getPage(1);
+  const vp = page.getViewport({ scale: 1 });
+
+  // Render to canvas for fallback
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  canvas.width = vp.width;
+  canvas.height = vp.height;
+  await page.render({ canvasContext: ctx, viewport: vp }).promise;
+
+  // Extract vector data from operator list
+  const opList = await page.getOperatorList();
+  const svgPaths = [];
+  let currentPath = '';
+  let fillColor = '#000000';
+  let strokeColor = 'none';
+  let strokeWidth = 1;
+  let pathCount = 0;
+
+  const OPS = pdfjsLib.OPS;
+
+  for (let i = 0; i < opList.fnArray.length; i++) {
+    const fn = opList.fnArray[i];
+    const args = opList.argsArray[i];
+
+    switch (fn) {
+      case OPS.setFillRGBColor:
+        fillColor = rgbStr(args[0], args[1], args[2]);
+        break;
+      case OPS.setStrokeRGBColor:
+        strokeColor = rgbStr(args[0], args[1], args[2]);
+        break;
+      case OPS.setFillCMYKColor:
+        fillColor = cmykToRgb(args[0], args[1], args[2], args[3]);
+        break;
+      case OPS.setStrokeCMYKColor:
+        strokeColor = cmykToRgb(args[0], args[1], args[2], args[3]);
+        break;
+      case OPS.setLineWidth:
+        strokeWidth = args[0];
+        break;
+      case OPS.constructPath: {
+        const ops = args[0];
+        const pathArgs = args[1];
+        let argIdx = 0;
+        for (const op of ops) {
+          switch (op) {
+            case OPS.moveTo:
+              currentPath += 'M' + rd(pathArgs[argIdx]) + ' ' + rd(pathArgs[argIdx+1]);
+              argIdx += 2; break;
+            case OPS.lineTo:
+              currentPath += 'L' + rd(pathArgs[argIdx]) + ' ' + rd(pathArgs[argIdx+1]);
+              argIdx += 2; break;
+            case OPS.curveTo:
+              currentPath += 'C' + rd(pathArgs[argIdx]) + ' ' + rd(pathArgs[argIdx+1]) + ' ' +
+                rd(pathArgs[argIdx+2]) + ' ' + rd(pathArgs[argIdx+3]) + ' ' +
+                rd(pathArgs[argIdx+4]) + ' ' + rd(pathArgs[argIdx+5]);
+              argIdx += 6; break;
+            case OPS.curveTo2:
+              currentPath += 'S' + rd(pathArgs[argIdx]) + ' ' + rd(pathArgs[argIdx+1]) + ' ' +
+                rd(pathArgs[argIdx+2]) + ' ' + rd(pathArgs[argIdx+3]);
+              argIdx += 4; break;
+            case OPS.curveTo3:
+              currentPath += 'Q' + rd(pathArgs[argIdx]) + ' ' + rd(pathArgs[argIdx+1]) + ' ' +
+                rd(pathArgs[argIdx+2]) + ' ' + rd(pathArgs[argIdx+3]);
+              argIdx += 4; break;
+            case OPS.closePath:
+              currentPath += 'Z'; break;
+            case OPS.rectangle:
+              currentPath += 'M' + rd(pathArgs[argIdx]) + ' ' + rd(pathArgs[argIdx+1]) +
+                'h' + rd(pathArgs[argIdx+2]) + 'v' + rd(pathArgs[argIdx+3]) +
+                'h' + rd(-pathArgs[argIdx+2]) + 'Z';
+              argIdx += 4; break;
+          }
+        }
+        break;
+      }
+      case OPS.fill:
+      case OPS.eoFill:
+        if (currentPath) {
+          pathCount++;
+          svgPaths.push('<path d="' + currentPath + '" fill="' + fillColor + '" stroke="none" data-name="Path ' + pathCount + '"/>');
+          currentPath = '';
+        }
+        break;
+      case OPS.stroke:
+        if (currentPath) {
+          pathCount++;
+          svgPaths.push('<path d="' + currentPath + '" fill="none" stroke="' + strokeColor + '" stroke-width="' + strokeWidth + '" data-name="Path ' + pathCount + '"/>');
+          currentPath = '';
+        }
+        break;
+      case OPS.fillStroke:
+      case OPS.eoFillStroke:
+        if (currentPath) {
+          pathCount++;
+          svgPaths.push('<path d="' + currentPath + '" fill="' + fillColor + '" stroke="' + strokeColor + '" stroke-width="' + strokeWidth + '" data-name="Path ' + pathCount + '"/>');
+          currentPath = '';
+        }
+        break;
+      case OPS.endPath:
+        currentPath = '';
+        break;
+    }
+  }
+
+  if (svgPaths.length === 0) {
+    const dataUrl = canvas.toDataURL('image/png');
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + vp.width + ' ' + vp.height +
+      '" width="' + vp.width + '" height="' + vp.height + '">' +
+      '<image href="' + dataUrl + '" width="' + vp.width + '" height="' + vp.height + '" data-name="Raster fallback"/></svg>';
+  }
+
+  return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + rd(vp.width) + ' ' + rd(vp.height) +
+    '" width="' + rd(vp.width) + '" height="' + rd(vp.height) + '">' +
+    '<g transform="translate(0,' + rd(vp.height) + ') scale(1,-1)">' +
+    svgPaths.join('') + '</g></svg>';
+}
+
+function rd(n) { return Math.round(n * 100) / 100; }
+
+function rgbStr(r, g, b) {
+  return 'rgb(' + Math.round(r*255) + ',' + Math.round(g*255) + ',' + Math.round(b*255) + ')';
+}
+
+function cmykToRgb(c, m, y, k) {
+  return 'rgb(' + Math.round(255*(1-c)*(1-k)) + ',' + Math.round(255*(1-m)*(1-k)) + ',' + Math.round(255*(1-y)*(1-k)) + ')';
+}
+
+// ==============================
+// EPS to SVG (basic PostScript paths)
+// ==============================
+async function convertEpsToSvg(file) {
+  const text = await file.text();
+
+  let bbMatch = text.match(/%%BoundingBox:\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+  let width = 612, height = 792;
+  if (bbMatch) {
+    width = parseFloat(bbMatch[3]) - parseFloat(bbMatch[1]);
+    height = parseFloat(bbMatch[4]) - parseFloat(bbMatch[2]);
+  }
+
+  const svgPaths = [];
+  let currentPath = '';
+  let fillColor = '#000000';
+  let strokeColor = '#000000';
+  let strokeWidth = 1;
+  let pathCount = 0;
+  let stack = [];
+  const lines = text.split('\n');
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('%')) continue;
+
+    const tokens = trimmed.split(/\s+/);
+    for (const token of tokens) {
+      const num = parseFloat(token);
+      if (!isNaN(num) && isFinite(num)) { stack.push(num); continue; }
+
+      switch (token) {
+        case 'moveto': case 'm': {
+          const y = stack.pop(), x = stack.pop();
+          if (x !== undefined) currentPath += 'M' + rd(x) + ' ' + rd(y);
+          break;
+        }
+        case 'lineto': case 'l': {
+          const y = stack.pop(), x = stack.pop();
+          if (x !== undefined) currentPath += 'L' + rd(x) + ' ' + rd(y);
+          break;
+        }
+        case 'curveto': case 'c': {
+          const y3 = stack.pop(), x3 = stack.pop();
+          const y2 = stack.pop(), x2 = stack.pop();
+          const y1 = stack.pop(), x1 = stack.pop();
+          if (x1 !== undefined) currentPath += 'C' + rd(x1) + ' ' + rd(y1) + ' ' + rd(x2) + ' ' + rd(y2) + ' ' + rd(x3) + ' ' + rd(y3);
+          break;
+        }
+        case 'closepath': case 'cp':
+          currentPath += 'Z'; break;
+        case 'fill': case 'f':
+          if (currentPath) {
+            pathCount++;
+            svgPaths.push('<path d="' + currentPath + '" fill="' + fillColor + '" data-name="Path ' + pathCount + '"/>');
+            currentPath = '';
+          }
+          break;
+        case 'stroke': case 's':
+          if (currentPath) {
+            pathCount++;
+            svgPaths.push('<path d="' + currentPath + '" fill="none" stroke="' + strokeColor + '" stroke-width="' + strokeWidth + '" data-name="Path ' + pathCount + '"/>');
+            currentPath = '';
+          }
+          break;
+        case 'setrgbcolor': {
+          const b = stack.pop(), g = stack.pop(), rv = stack.pop();
+          if (rv !== undefined) { const c = rgbStr(rv, g, b); fillColor = c; strokeColor = c; }
+          break;
+        }
+        case 'setcmykcolor': {
+          const k = stack.pop(), y = stack.pop(), m = stack.pop(), cv = stack.pop();
+          if (cv !== undefined) { const c = cmykToRgb(cv, m, y, k); fillColor = c; strokeColor = c; }
+          break;
+        }
+        case 'setlinewidth': {
+          const w = stack.pop();
+          if (w !== undefined) strokeWidth = w;
+          break;
+        }
+        case 'setgray': {
+          const g = stack.pop();
+          if (g !== undefined) { const v = Math.round(g*255); fillColor = 'rgb(' + v + ',' + v + ',' + v + ')'; strokeColor = fillColor; }
+          break;
+        }
+        case 'newpath':
+          currentPath = ''; stack = []; break;
+      }
+    }
+  }
+
+  if (svgPaths.length === 0) {
+    throw new Error('No vector data found in EPS. Unsupported PostScript operators.');
+  }
+
+  return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + rd(width) + ' ' + rd(height) +
+    '" width="' + rd(width) + '" height="' + rd(height) + '">' +
+    '<g transform="translate(0,' + rd(height) + ') scale(1,-1)">' +
+    svgPaths.join('') + '</g></svg>';
+}
+
+// ==============================
+// Load SVG into canvas
+// ==============================
+function loadSvg(svgText, fileName) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(svgText, 'image/svg+xml');
+  const svgEl = doc.querySelector('svg');
+
+  if (!svgEl) { showToast('Invalid SVG data'); return; }
+
+  svgEl.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  currentSvgDoc = svgEl;
+
+  // Clear viewport and append clone
+  while (viewport.firstChild) viewport.removeChild(viewport.firstChild);
+  viewport.appendChild(svgEl.cloneNode(true));
+
+  const displaySvg = viewport.querySelector('svg');
+  makeElementsInteractive(displaySvg);
+  buildLayerTree(displaySvg);
+
+  dropzone.classList.add('hidden');
+  container.style.display = 'block';
+  bottombar.style.display = 'flex';
+  document.getElementById('btnClearAll').style.display = '';
+  document.getElementById('fileInfo').textContent = fileName;
+
+  zoom = 1; panX = 0; panY = 0;
+  requestAnimationFrame(() => fitToView());
+}
+
+// ==============================
+// Make SVG elements interactive
+// ==============================
+function makeElementsInteractive(svgEl) {
+  const interactiveTypes = new Set(['path', 'rect', 'circle', 'ellipse', 'polygon', 'polyline', 'line', 'text', 'image', 'use']);
+
+  function processElement(el) {
+    const tag = el.tagName && el.tagName.toLowerCase();
+    if (interactiveTypes.has(tag)) {
+      el.classList.add('svg-element-interactive');
+      el.addEventListener('mouseenter', (e) => { e.stopPropagation(); hoverElement(el); });
+      el.addEventListener('mouseleave', () => unhoverElement(el));
+      el.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); selectElement(el); });
+    }
+    if (el.children) {
+      for (const child of el.children) processElement(child);
+    }
+  }
+
+  svgEl.addEventListener('click', (e) => {
+    if (e.target === svgEl) deselectElement();
+  });
+
+  processElement(svgEl);
+}
+
+// ==============================
+// Hover / Select
+// ==============================
+function hoverElement(el) {
+  if (hoveredElement && hoveredElement !== el) {
+    hoveredElement.classList.remove('element-highlight-hover');
+  }
+  hoveredElement = el;
+  el.classList.add('element-highlight-hover');
+
+  const idx = getElementIndex(el);
+  layerTree.querySelectorAll('.layer-item.hovered').forEach(li => li.classList.remove('hovered'));
+  const layerItem = layerTree.querySelector('.layer-item[data-index="' + idx + '"]');
+  if (layerItem) layerItem.classList.add('hovered');
+}
+
+function unhoverElement(el) {
+  el.classList.remove('element-highlight-hover');
+  if (hoveredElement === el) hoveredElement = null;
+  layerTree.querySelectorAll('.layer-item.hovered').forEach(li => li.classList.remove('hovered'));
+}
+
+function selectElement(el) {
+  viewport.querySelectorAll('.element-highlight-selected').forEach(e => e.classList.remove('element-highlight-selected'));
+  layerTree.querySelectorAll('.layer-item.selected').forEach(li => li.classList.remove('selected'));
+
+  selectedElement = el;
+  el.classList.add('element-highlight-selected');
+  el.classList.remove('element-highlight-hover');
+
+  showSelectionPanel(el);
+
+  const idx = getElementIndex(el);
+  const layerItem = layerTree.querySelector('.layer-item[data-index="' + idx + '"]');
+  if (layerItem) {
+    layerItem.classList.add('selected');
+    layerItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+}
+
+function deselectElement() {
+  if (selectedElement) {
+    selectedElement.classList.remove('element-highlight-selected');
+    selectedElement = null;
+  }
+  layerTree.querySelectorAll('.layer-item.selected').forEach(li => li.classList.remove('selected'));
+  selectionPanel.classList.remove('visible');
+}
+
+function getElementIndex(el) {
+  const allElements = viewport.querySelectorAll('.svg-element-interactive');
+  return Array.from(allElements).indexOf(el);
+}
+
+// ==============================
+// Selection Panel
+// ==============================
+function showSelectionPanel(el) {
+  const tag = el.tagName.toLowerCase();
+  const name = el.getAttribute('data-name') || el.getAttribute('id') || el.getAttribute('class') || tag;
+
+  // Preview
+  const previewSvg = generateElementSvg(el);
+  while (selectionPreview.firstChild) selectionPreview.removeChild(selectionPreview.firstChild);
+  const previewParser = new DOMParser();
+  const previewDoc = previewParser.parseFromString(previewSvg, 'image/svg+xml');
+  const previewSvgEl = previewDoc.querySelector('svg');
+  if (previewSvgEl) selectionPreview.appendChild(document.importNode(previewSvgEl, true));
+
+  // Metadata
+  let bbox;
+  try { bbox = el.getBBox(); } catch (e) { bbox = { x: 0, y: 0, width: 0, height: 0 }; }
+
+  while (selectionMeta.firstChild) selectionMeta.removeChild(selectionMeta.firstChild);
+  const metaItems = [
+    { label: 'Type', value: tag },
+    { label: 'Name', value: name },
+    { label: 'Size', value: rd(bbox.width) + ' x ' + rd(bbox.height) },
+    { label: 'Position', value: rd(bbox.x) + ', ' + rd(bbox.y) }
+  ];
+  for (const item of metaItems) {
+    const div = document.createElement('div');
+    div.className = 'selection-meta-item';
+    const labelSpan = document.createElement('span');
+    labelSpan.className = 'selection-meta-label';
+    labelSpan.textContent = item.label;
+    const valueSpan = document.createElement('span');
+    valueSpan.className = 'selection-meta-value';
+    valueSpan.textContent = item.value;
+    div.appendChild(labelSpan);
+    div.appendChild(valueSpan);
+    selectionMeta.appendChild(div);
+  }
+
+  selectionPanel.classList.add('visible');
+}
+
+// ==============================
+// Generate standalone SVG from element
+// ==============================
+function generateElementSvg(el) {
+  const clone = el.cloneNode(true);
+  clone.classList.remove('svg-element-interactive', 'element-highlight-hover', 'element-highlight-selected');
+
+  let bbox;
+  try { bbox = el.getBBox(); } catch (e) { bbox = { x: 0, y: 0, width: 100, height: 100 }; }
+
+  const padding = Math.max(bbox.width, bbox.height) * 0.1;
+  const vbX = rd(bbox.x - padding);
+  const vbY = rd(bbox.y - padding);
+  const vbW = rd(bbox.width + padding * 2);
+  const vbH = rd(bbox.height + padding * 2);
+
+  // Collect inherited transforms
+  const transforms = [];
+  let parent = el.parentElement;
+  while (parent && parent.tagName && parent.tagName.toLowerCase() !== 'svg') {
+    const t = parent.getAttribute('transform');
+    if (t) transforms.unshift(t);
+    parent = parent.parentElement;
+  }
+
+  const serializer = new XMLSerializer();
+  let inner = serializer.serializeToString(clone);
+  if (transforms.length > 0) {
+    inner = '<g transform="' + transforms.join(' ') + '">' + inner + '</g>';
+  }
+
+  // Collect defs
+  const svgRoot = viewport.querySelector('svg');
+  const defs = svgRoot ? svgRoot.querySelector('defs') : null;
+  let defsStr = '';
+  if (defs) defsStr = serializer.serializeToString(defs);
+
+  return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="' + vbX + ' ' + vbY + ' ' + vbW + ' ' + vbH + '">' + defsStr + inner + '</svg>';
+}
+
+// ==============================
+// SVG Optimization
+// ==============================
+function optimizeSvg(svgString) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(svgString, 'image/svg+xml');
+  const svg = doc.querySelector('svg');
+  if (!svg) return svgString;
+
+  // Remove metadata, title, desc
+  svg.querySelectorAll('metadata, title, desc').forEach(el => el.remove());
+
+  // Remove comments
+  const walker = document.createTreeWalker(svg, NodeFilter.SHOW_COMMENT, null);
+  const comments = [];
+  while (walker.nextNode()) comments.push(walker.currentNode);
+  comments.forEach(c => c.remove());
+
+  // Attributes to strip
+  const removeAttrs = [
+    'data-name', 'data-layer',
+    'xmlns:xlink', 'xmlns:sodipodi', 'xmlns:inkscape',
+    'xml:space'
+  ];
+
+  walkDom(svg, (el) => {
+    const attrsToRemove = [];
+    for (const attr of el.attributes) {
+      if (removeAttrs.includes(attr.name) ||
+          attr.name.startsWith('sodipodi:') ||
+          attr.name.startsWith('inkscape:') ||
+          attr.name.startsWith('data-')) {
+        attrsToRemove.push(attr.name);
+      }
+    }
+    attrsToRemove.forEach(a => el.removeAttribute(a));
+
+    // Clean classes
+    if (el.classList) {
+      el.classList.remove('svg-element-interactive', 'element-highlight-hover', 'element-highlight-selected');
+      if (el.getAttribute('class') === '') el.removeAttribute('class');
+    }
+
+    // Simplify path data
+    if (el.tagName === 'path' && el.getAttribute('d')) {
+      el.setAttribute('d', simplifyPathData(el.getAttribute('d')));
+    }
+
+    // Round numeric attrs
+    const numericAttrs = ['x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'r', 'rx', 'ry', 'width', 'height', 'stroke-width', 'opacity', 'font-size'];
+    for (const attr of numericAttrs) {
+      const val = el.getAttribute(attr);
+      if (val && !isNaN(parseFloat(val))) {
+        el.setAttribute(attr, rd(parseFloat(val)).toString());
+      }
+    }
+
+    // Remove default values
+    if (el.getAttribute('fill-opacity') === '1') el.removeAttribute('fill-opacity');
+    if (el.getAttribute('stroke-opacity') === '1') el.removeAttribute('stroke-opacity');
+    if (el.getAttribute('opacity') === '1') el.removeAttribute('opacity');
+    if (el.getAttribute('fill-rule') === 'nonzero') el.removeAttribute('fill-rule');
+  });
+
+  // Simplify transforms
+  walkDom(svg, (el) => {
+    const transform = el.getAttribute('transform');
+    if (!transform) return;
+    if (/^translate\(0[, ]0\)$/.test(transform.trim()) || transform.trim() === 'translate(0)') el.removeAttribute('transform');
+    if (/^scale\(1[, ]1\)$/.test(transform.trim()) || transform.trim() === 'scale(1)') el.removeAttribute('transform');
+  });
+
+  // Remove empty groups
+  let changed = true;
+  while (changed) {
+    changed = false;
+    svg.querySelectorAll('g').forEach(g => {
+      if (g.children.length === 0 && g.textContent.trim() === '') {
+        g.remove(); changed = true;
+      }
+      if (g.children.length === 1 && !g.getAttribute('transform') &&
+          !g.getAttribute('clip-path') && !g.getAttribute('mask') &&
+          !g.getAttribute('filter') && !g.getAttribute('opacity')) {
+        g.replaceWith(g.children[0]); changed = true;
+      }
+    });
+  }
+
+  let result = new XMLSerializer().serializeToString(svg);
+  result = result.replace(/<\?xml[^?]*\?>/, '');
+
+  // Clean duplicate xmlns
+  let first = true;
+  result = result.replace(/ xmlns="http:\/\/www\.w3\.org\/2000\/svg"/g, (match) => {
+    if (first) { first = false; return match; }
+    return '';
+  });
+
+  // Minify then re-format
+  result = result.replace(/>\s+</g, '><');
+  result = formatSvg(result);
+
+  return result;
+}
+
+function walkDom(el, callback) {
+  if (el.nodeType === 1) {
+    callback(el);
+    for (const child of el.children) walkDom(child, callback);
+  }
+}
+
+function simplifyPathData(d) {
+  return d.replace(/-?\d+\.?\d*/g, (match) => {
+    const num = parseFloat(match);
+    if (isNaN(num)) return match;
+    return (Math.round(num * 100) / 100).toString();
+  }).replace(/\s+/g, ' ').replace(/ ([MCLZSQTAHVmclzsqtahv])/g, '$1').replace(/([MCLZSQTAHVmclzsqtahv]) /g, '$1').trim();
+}
+
+function formatSvg(svg) {
+  let formatted = '';
+  let indent = 0;
+  const tags = svg.replace(/></g, '>\n<').split('\n');
+  for (const tag of tags) {
+    const trimmed = tag.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith('</')) indent--;
+    formatted += '  '.repeat(Math.max(0, indent)) + trimmed + '\n';
+    if (trimmed.startsWith('<') && !trimmed.startsWith('</') && !trimmed.endsWith('/>') && !trimmed.includes('</')) indent++;
+  }
+  return formatted.trim();
+}
+
+// ==============================
+// Copy / Show code
+// ==============================
+async function copySelectedSVG() {
+  if (!selectedElement) return;
+  const optimized = optimizeSvg(generateElementSvg(selectedElement));
+  try {
+    await navigator.clipboard.writeText(optimized);
+  } catch (err) {
+    fallbackCopy(optimized);
+  }
+  showToast('SVG copied to clipboard');
+}
+
+function showSVGCode() {
+  if (!selectedElement) return;
+  const optimized = optimizeSvg(generateElementSvg(selectedElement));
+  codeContent.textContent = optimized;
+  codeModal.classList.add('visible');
+}
+
+async function copyFromModal() {
+  const code = codeContent.textContent;
+  try {
+    await navigator.clipboard.writeText(code);
+  } catch (err) {
+    fallbackCopy(code);
+  }
+  showToast('SVG copied to clipboard');
+}
+
+function closeModal() {
+  codeModal.classList.remove('visible');
+}
+
+function fallbackCopy(text) {
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  document.body.removeChild(textarea);
+}
+
+// ==============================
+// Layer tree building
+// ==============================
+function buildLayerTree(svgEl) {
+  let elementIndex = 0;
+
+  // Clear layer tree
+  while (layerTree.firstChild) layerTree.removeChild(layerTree.firstChild);
+
+  function processNode(node, depth) {
+    const tag = node.tagName && node.tagName.toLowerCase();
+    if (!tag) return;
+    if (['defs', 'metadata', 'title', 'desc', 'style'].includes(tag)) return;
+
+    const isGroup = tag === 'g';
+    const isElement = ['path', 'rect', 'circle', 'ellipse', 'polygon', 'polyline', 'line', 'text', 'image', 'use'].includes(tag);
+
+    if (!isGroup && !isElement) {
+      if (node.children) {
+        for (const child of node.children) processNode(child, depth);
+      }
+      return;
+    }
+
+    const name = node.getAttribute('data-name') || node.getAttribute('id') || (isGroup ? 'Group' : tag);
+
+    if (isGroup) {
+      const childCount = node.querySelectorAll('path, rect, circle, ellipse, polygon, polyline, line, text, image, use').length;
+
+      const item = document.createElement('div');
+      item.className = 'layer-item layer-item--group';
+      item.dataset.index = '-1';
+      item.dataset.depth = depth;
+
+      const toggleSpan = document.createElement('span');
+      toggleSpan.className = 'layer-toggle expanded';
+      const toggleSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      toggleSvg.setAttribute('viewBox', '0 0 10 10');
+      toggleSvg.setAttribute('fill', 'currentColor');
+      const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+      polygon.setAttribute('points', '3,1 9,5 3,9');
+      toggleSvg.appendChild(polygon);
+      toggleSpan.appendChild(toggleSvg);
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'layer-name';
+      nameSpan.textContent = name;
+
+      const typeSpan = document.createElement('span');
+      typeSpan.className = 'layer-type';
+      typeSpan.textContent = childCount;
+
+      item.appendChild(toggleSpan);
+      item.appendChild(nameSpan);
+      item.appendChild(typeSpan);
+
+      item.addEventListener('click', () => toggleGroup(item));
+      layerTree.appendChild(item);
+
+      for (const child of node.children) processNode(child, depth + 1);
+    } else if (isElement) {
+      const idx = elementIndex++;
+      const item = document.createElement('div');
+      item.className = 'layer-item' + (depth > 0 ? ' layer-item--child' : '');
+      item.dataset.index = idx;
+      item.style.paddingLeft = (16 + depth * 16) + 'px';
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'layer-name';
+      nameSpan.textContent = name;
+
+      const typeSpan = document.createElement('span');
+      typeSpan.className = 'layer-type';
+      typeSpan.textContent = tag;
+
+      item.appendChild(nameSpan);
+      item.appendChild(typeSpan);
+
+      item.addEventListener('mouseenter', () => {
+        const els = viewport.querySelectorAll('.svg-element-interactive');
+        if (els[idx]) hoverElement(els[idx]);
+      });
+      item.addEventListener('mouseleave', () => {
+        const els = viewport.querySelectorAll('.svg-element-interactive');
+        if (els[idx]) unhoverElement(els[idx]);
+      });
+      item.addEventListener('click', () => {
+        const els = viewport.querySelectorAll('.svg-element-interactive');
+        if (els[idx]) selectElement(els[idx]);
+      });
+
+      layerTree.appendChild(item);
+    }
+  }
+
+  for (const child of svgEl.children) processNode(child, 0);
+  layerCountEl.textContent = elementIndex;
+}
+
+function toggleGroup(groupEl) {
+  const toggle = groupEl.querySelector('.layer-toggle');
+  const isExpanded = toggle.classList.contains('expanded');
+  toggle.classList.toggle('expanded');
+
+  let sibling = groupEl.nextElementSibling;
+  const groupDepth = parseInt(groupEl.dataset.depth);
+
+  while (sibling) {
+    const sibDepth = parseInt(sibling.dataset.depth || '0');
+    const isChildGroup = sibling.classList.contains('layer-item--group');
+    if (isChildGroup && sibDepth <= groupDepth) break;
+    if (!isChildGroup && parseInt(sibling.style.paddingLeft) <= (16 + groupDepth * 16)) break;
+    sibling.style.display = isExpanded ? 'none' : '';
+    sibling = sibling.nextElementSibling;
+  }
+}
+
+// ==============================
+// Pan & Zoom
+// ==============================
+mainArea.addEventListener('wheel', (e) => {
+  if (!currentSvgDoc) return;
+  e.preventDefault();
+
+  const delta = e.deltaY > 0 ? 0.9 : 1.1;
+  const newZoom = Math.max(0.05, Math.min(20, zoom * delta));
+
+  const rect = container.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  panX = mx - (mx - panX) * (newZoom / zoom);
+  panY = my - (my - panY) * (newZoom / zoom);
+  zoom = newZoom;
+  updateViewport();
+}, { passive: false });
+
+mainArea.addEventListener('mousedown', (e) => {
+  if (e.button === 1 || (e.button === 0 && (e.target === container || e.target === mainArea || e.target.classList.contains('canvas-grid')))) {
+    isPanning = true;
+    panStartX = e.clientX - panX;
+    panStartY = e.clientY - panY;
+    viewport.style.cursor = 'grabbing';
+    e.preventDefault();
+  }
+});
+
+window.addEventListener('mousemove', (e) => {
+  if (isPanning) {
+    panX = e.clientX - panStartX;
+    panY = e.clientY - panStartY;
+    updateViewport();
+  }
+});
+
+window.addEventListener('mouseup', () => {
+  isPanning = false;
+  viewport.style.cursor = '';
+});
+
+function updateViewport() {
+  viewport.style.transform = 'translate(' + panX + 'px, ' + panY + 'px) scale(' + zoom + ')';
+  document.getElementById('zoomDisplay').textContent = Math.round(zoom * 100) + '%';
+}
+
+function zoomIn() {
+  zoom = Math.min(20, zoom * 1.25);
+  updateViewport();
+}
+
+function zoomOut() {
+  zoom = Math.max(0.05, zoom * 0.8);
+  updateViewport();
+}
+
+function fitToView() {
+  const svgEl = viewport.querySelector('svg');
+  if (!svgEl) return;
+
+  const cRect = container.getBoundingClientRect();
+  const svgW = (svgEl.viewBox && svgEl.viewBox.baseVal && svgEl.viewBox.baseVal.width) ||
+               (svgEl.width && svgEl.width.baseVal && svgEl.width.baseVal.value) ||
+               parseFloat(svgEl.getAttribute('width')) || 800;
+  const svgH = (svgEl.viewBox && svgEl.viewBox.baseVal && svgEl.viewBox.baseVal.height) ||
+               (svgEl.height && svgEl.height.baseVal && svgEl.height.baseVal.value) ||
+               parseFloat(svgEl.getAttribute('height')) || 600;
+
+  const padding = 60;
+  const scaleX = (cRect.width - padding * 2) / svgW;
+  const scaleY = (cRect.height - padding * 2) / svgH;
+  zoom = Math.min(scaleX, scaleY, 3);
+  panX = (cRect.width - svgW * zoom) / 2;
+  panY = (cRect.height - svgH * zoom) / 2;
+  updateViewport();
+}
+
+// ==============================
+// Clear all
+// ==============================
+function clearAll() {
+  currentSvgDoc = null;
+  selectedElement = null;
+  hoveredElement = null;
+  while (viewport.firstChild) viewport.removeChild(viewport.firstChild);
+
+  while (layerTree.firstChild) layerTree.removeChild(layerTree.firstChild);
+  const placeholder = document.createElement('div');
+  placeholder.style.cssText = 'padding: 20px 16px; text-align: center;';
+  const p = document.createElement('p');
+  p.style.cssText = 'color: var(--text-muted); font-size: 11px; line-height: 1.6;';
+  p.textContent = 'Load a vector file to see layers here';
+  placeholder.appendChild(p);
+  layerTree.appendChild(placeholder);
+
+  layerCountEl.textContent = '0';
+  dropzone.classList.remove('hidden');
+  container.style.display = 'none';
+  bottombar.style.display = 'none';
+  selectionPanel.classList.remove('visible');
+  document.getElementById('btnClearAll').style.display = 'none';
+  fileInput.value = '';
+}
+
+// ==============================
+// Utilities
+// ==============================
+function showToast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  setTimeout(() => toastEl.classList.remove('show'), 2500);
+}
+
+function showLoading(show) {
+  loadingOverlay.classList.toggle('visible', show);
+}
+</script>
+
+</body>
+</html>
