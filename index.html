@@ -932,13 +932,32 @@
 // PDF.js setup
 // ==============================
 let pdfjsLib = null;
+let SVGGraphicsClass = null;
 
 async function initPdfJs() {
+  // Try pdf.js 3.11.174 non-minified build which exports SVGGraphics
   try {
-    pdfjsLib = await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs');
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs';
-  } catch (e) {
-    console.warn('PDF.js failed to load, PDF/AI support disabled:', e);
+    pdfjsLib = await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.mjs');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.mjs';
+    if (pdfjsLib.SVGGraphics) {
+      SVGGraphicsClass = pdfjsLib.SVGGraphics;
+      console.log('PDF.js 3.11 loaded with SVGGraphics support');
+    }
+  } catch (e1) {
+    console.warn('pdf.js 3.11 full build failed, trying min:', e1);
+    try {
+      pdfjsLib = await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.mjs');
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.mjs';
+      if (pdfjsLib.SVGGraphics) SVGGraphicsClass = pdfjsLib.SVGGraphics;
+    } catch (e2) {
+      console.warn('pdf.js 3.11 min failed, trying 4.x:', e2);
+      try {
+        pdfjsLib = await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs');
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs';
+      } catch (e3) {
+        console.warn('PDF.js failed to load entirely:', e3);
+      }
+    }
   }
 }
 
@@ -1070,6 +1089,7 @@ async function handleFile(file) {
 
 // ==============================
 // PDF/AI to SVG conversion
+// Strategy: SVGGraphics (full fidelity) -> canvas high-DPI fallback
 // ==============================
 async function convertPdfToSvg(file) {
   if (!pdfjsLib) {
@@ -1081,23 +1101,66 @@ async function convertPdfToSvg(file) {
   const page = await pdf.getPage(1);
   const vp = page.getViewport({ scale: 1 });
 
-  // Render to canvas for fallback
+  // Method 1: SVGGraphics -- produces true vector SVG with all colors, gradients, fonts
+  if (SVGGraphicsClass) {
+    try {
+      const opList = await page.getOperatorList();
+      const svgGfx = new SVGGraphicsClass(page.commonObjs, page.objs);
+      svgGfx.embedFonts = true;
+      const svgEl = await svgGfx.getSVG(opList, vp);
+
+      const serializer = new XMLSerializer();
+      let svgStr = serializer.serializeToString(svgEl);
+      if (!svgStr.includes('xmlns="http://www.w3.org/2000/svg"')) {
+        svgStr = svgStr.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+      }
+      return svgStr;
+    } catch (svgErr) {
+      console.warn('SVGGraphics failed, falling back to canvas:', svgErr);
+    }
+  }
+
+  // Method 2: Render to canvas at 3x resolution and embed as high-quality raster SVG
+  // Also extract vector paths as transparent overlays for element selection
+  const scale = 3;
+  const scaledVp = page.getViewport({ scale: scale });
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
-  canvas.width = vp.width;
-  canvas.height = vp.height;
-  await page.render({ canvasContext: ctx, viewport: vp }).promise;
+  canvas.width = scaledVp.width;
+  canvas.height = scaledVp.height;
+  await page.render({ canvasContext: ctx, viewport: scaledVp }).promise;
 
-  // Extract vector data from operator list
+  const dataUrl = canvas.toDataURL('image/png');
+
+  // Extract vector contours for interactive selection overlay
   const opList = await page.getOperatorList();
-  const svgPaths = [];
-  let currentPath = '';
-  let fillColor = '#000000';
-  let strokeColor = 'none';
-  let strokeWidth = 1;
-  let pathCount = 0;
+  const vectorPaths = extractVectorPaths(opList, pdfjsLib.OPS);
 
-  const OPS = pdfjsLib.OPS;
+  // Build SVG: raster background + transparent vector overlays for selection
+  let svgContent = '<image href="' + dataUrl + '" width="' + rd(vp.width) + '" height="' + rd(vp.height) +
+    '" preserveAspectRatio="none" data-name="Background render"/>';
+
+  // Add transparent vector overlays (flipped Y since PDF origin is bottom-left)
+  if (vectorPaths.length > 0) {
+    svgContent += '<g transform="translate(0,' + rd(vp.height) + ') scale(1,-1)" opacity="0">';
+    for (let i = 0; i < vectorPaths.length; i++) {
+      svgContent += '<path d="' + vectorPaths[i].d + '" fill="' +
+        (vectorPaths[i].fill || 'black') + '" stroke="' + (vectorPaths[i].stroke || 'none') +
+        '" data-name="Element ' + (i + 1) + '"/>';
+    }
+    svgContent += '</g>';
+  }
+
+  return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + rd(vp.width) + ' ' + rd(vp.height) +
+    '" width="' + rd(vp.width) + '" height="' + rd(vp.height) + '">' + svgContent + '</svg>';
+}
+
+// Extract basic vector path data from PDF operator list (for interactive overlays)
+function extractVectorPaths(opList, OPS) {
+  const paths = [];
+  let currentPath = '';
+  let fillColor = '#000';
+  let strokeColor = 'none';
 
   for (let i = 0; i < opList.fnArray.length; i++) {
     const fn = opList.fnArray[i];
@@ -1105,20 +1168,13 @@ async function convertPdfToSvg(file) {
 
     switch (fn) {
       case OPS.setFillRGBColor:
-        fillColor = rgbStr(args[0], args[1], args[2]);
-        break;
+        fillColor = rgbStr(args[0], args[1], args[2]); break;
       case OPS.setStrokeRGBColor:
-        strokeColor = rgbStr(args[0], args[1], args[2]);
-        break;
+        strokeColor = rgbStr(args[0], args[1], args[2]); break;
       case OPS.setFillCMYKColor:
-        fillColor = cmykToRgb(args[0], args[1], args[2], args[3]);
-        break;
+        fillColor = cmykToRgb(args[0], args[1], args[2], args[3]); break;
       case OPS.setStrokeCMYKColor:
-        strokeColor = cmykToRgb(args[0], args[1], args[2], args[3]);
-        break;
-      case OPS.setLineWidth:
-        strokeWidth = args[0];
-        break;
+        strokeColor = cmykToRgb(args[0], args[1], args[2], args[3]); break;
       case OPS.constructPath: {
         const ops = args[0];
         const pathArgs = args[1];
@@ -1155,46 +1211,17 @@ async function convertPdfToSvg(file) {
         }
         break;
       }
-      case OPS.fill:
-      case OPS.eoFill:
-        if (currentPath) {
-          pathCount++;
-          svgPaths.push('<path d="' + currentPath + '" fill="' + fillColor + '" stroke="none" data-name="Path ' + pathCount + '"/>');
-          currentPath = '';
-        }
-        break;
+      case OPS.fill: case OPS.eoFill:
+        if (currentPath) { paths.push({ d: currentPath, fill: fillColor, stroke: 'none' }); currentPath = ''; } break;
       case OPS.stroke:
-        if (currentPath) {
-          pathCount++;
-          svgPaths.push('<path d="' + currentPath + '" fill="none" stroke="' + strokeColor + '" stroke-width="' + strokeWidth + '" data-name="Path ' + pathCount + '"/>');
-          currentPath = '';
-        }
-        break;
-      case OPS.fillStroke:
-      case OPS.eoFillStroke:
-        if (currentPath) {
-          pathCount++;
-          svgPaths.push('<path d="' + currentPath + '" fill="' + fillColor + '" stroke="' + strokeColor + '" stroke-width="' + strokeWidth + '" data-name="Path ' + pathCount + '"/>');
-          currentPath = '';
-        }
-        break;
+        if (currentPath) { paths.push({ d: currentPath, fill: 'none', stroke: strokeColor }); currentPath = ''; } break;
+      case OPS.fillStroke: case OPS.eoFillStroke:
+        if (currentPath) { paths.push({ d: currentPath, fill: fillColor, stroke: strokeColor }); currentPath = ''; } break;
       case OPS.endPath:
-        currentPath = '';
-        break;
+        currentPath = ''; break;
     }
   }
-
-  if (svgPaths.length === 0) {
-    const dataUrl = canvas.toDataURL('image/png');
-    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + vp.width + ' ' + vp.height +
-      '" width="' + vp.width + '" height="' + vp.height + '">' +
-      '<image href="' + dataUrl + '" width="' + vp.width + '" height="' + vp.height + '" data-name="Raster fallback"/></svg>';
-  }
-
-  return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + rd(vp.width) + ' ' + rd(vp.height) +
-    '" width="' + rd(vp.width) + '" height="' + rd(vp.height) + '">' +
-    '<g transform="translate(0,' + rd(vp.height) + ') scale(1,-1)">' +
-    svgPaths.join('') + '</g></svg>';
+  return paths;
 }
 
 function rd(n) { return Math.round(n * 100) / 100; }
