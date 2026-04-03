@@ -466,6 +466,20 @@
     filter: drop-shadow(0 0 6px var(--accent-glow));
   }
 
+  /* ===== MARQUEE SELECTION ===== */
+  .marquee {
+    position: fixed;
+    border: 1.5px dashed var(--accent);
+    background: rgba(255, 77, 0, 0.06);
+    pointer-events: none;
+    z-index: 15;
+    display: none;
+  }
+
+  .marquee.active {
+    display: block;
+  }
+
   /* ===== BOTTOM BAR ===== */
   .bottombar {
     position: absolute;
@@ -902,6 +916,9 @@
   </main>
 </div>
 
+<!-- Marquee selection rectangle -->
+<div class="marquee" id="marquee"></div>
+
 <!-- Toast -->
 <div class="toast" id="toast"></div>
 
@@ -927,78 +944,58 @@
   </div>
 </div>
 
-<script type="module">
+<!-- pdf.js 2.16.105 UMD build with SVGGraphics support -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+<script>
+
 // ==============================
 // PDF.js setup
 // ==============================
-let pdfjsLib = null;
-let SVGGraphicsClass = null;
-
-async function initPdfJs() {
-  // Try pdf.js 3.11.174 non-minified build which exports SVGGraphics
-  try {
-    pdfjsLib = await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.mjs');
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.mjs';
-    if (pdfjsLib.SVGGraphics) {
-      SVGGraphicsClass = pdfjsLib.SVGGraphics;
-      console.log('PDF.js 3.11 loaded with SVGGraphics support');
-    }
-  } catch (e1) {
-    console.warn('pdf.js 3.11 full build failed, trying min:', e1);
-    try {
-      pdfjsLib = await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.mjs');
-      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.mjs';
-      if (pdfjsLib.SVGGraphics) SVGGraphicsClass = pdfjsLib.SVGGraphics;
-    } catch (e2) {
-      console.warn('pdf.js 3.11 min failed, trying 4.x:', e2);
-      try {
-        pdfjsLib = await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs');
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs';
-      } catch (e3) {
-        console.warn('PDF.js failed to load entirely:', e3);
-      }
-    }
-  }
+var pdfjsLib = window.pdfjsLib || null;
+if (pdfjsLib) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
 }
-
-initPdfJs();
 
 // ==============================
 // State
 // ==============================
-let currentSvgDoc = null;
-let selectedElement = null;
-let hoveredElement = null;
-let zoom = 1;
-let panX = 0, panY = 0;
-let isPanning = false;
-let panStartX, panStartY;
+var currentSvgDoc = null;
+var selectedElements = []; // multi-select support
+var hoveredElement = null;
+var zoom = 1;
+var panX = 0, panY = 0;
+var isPanning = false;
+var panStartX, panStartY;
+// Marquee state
+var isMarquee = false;
+var marqueeStartX = 0, marqueeStartY = 0;
 
 // ==============================
 // DOM references
 // ==============================
-const viewport = document.getElementById('canvasViewport');
-const container = document.getElementById('canvasContainer');
-const dropzone = document.getElementById('dropzone');
-const layerTree = document.getElementById('layerTree');
-const layerCountEl = document.getElementById('layerCount');
-const selectionPanel = document.getElementById('selectionPanel');
-const toastEl = document.getElementById('toast');
-const bottombar = document.getElementById('bottombar');
-const loadingOverlay = document.getElementById('loadingOverlay');
-const fileInput = document.getElementById('fileInput');
-const mainArea = document.getElementById('mainArea');
-const codeModal = document.getElementById('codeModal');
-const codeContent = document.getElementById('codeContent');
-const selectionPreview = document.getElementById('selectionPreview');
-const selectionMeta = document.getElementById('selectionMeta');
+var viewport = document.getElementById('canvasViewport');
+var container = document.getElementById('canvasContainer');
+var dropzone = document.getElementById('dropzone');
+var layerTree = document.getElementById('layerTree');
+var layerCountEl = document.getElementById('layerCount');
+var selectionPanel = document.getElementById('selectionPanel');
+var toastEl = document.getElementById('toast');
+var bottombar = document.getElementById('bottombar');
+var loadingOverlay = document.getElementById('loadingOverlay');
+var fileInput = document.getElementById('fileInput');
+var mainArea = document.getElementById('mainArea');
+var codeModal = document.getElementById('codeModal');
+var codeContent = document.getElementById('codeContent');
+var selectionPreview = document.getElementById('selectionPreview');
+var selectionMeta = document.getElementById('selectionMeta');
+var marqueeEl = document.getElementById('marquee');
 
 // ==============================
-// Event bindings via addEventListener (no inline handlers)
+// Event bindings
 // ==============================
-document.getElementById('btnLoadFile').addEventListener('click', () => fileInput.click());
+document.getElementById('btnLoadFile').addEventListener('click', function() { fileInput.click(); });
 document.getElementById('btnClearAll').addEventListener('click', clearAll);
-document.getElementById('btnDeselectPanel').addEventListener('click', deselectElement);
+document.getElementById('btnDeselectPanel').addEventListener('click', deselectAll);
 document.getElementById('btnCopySvg').addEventListener('click', copySelectedSVG);
 document.getElementById('btnShowCode').addEventListener('click', showSVGCode);
 document.getElementById('btnCopyFromModal').addEventListener('click', copyFromModal);
@@ -1008,49 +1005,46 @@ document.getElementById('btnZoomIn').addEventListener('click', zoomIn);
 document.getElementById('btnZoomOut').addEventListener('click', zoomOut);
 document.getElementById('btnFitView').addEventListener('click', fitToView);
 
-fileInput.addEventListener('change', (e) => {
+fileInput.addEventListener('change', function(e) {
   if (e.target.files.length > 0) handleFile(e.target.files[0]);
 });
 
 // Drag & drop
-mainArea.addEventListener('dragover', (e) => {
+mainArea.addEventListener('dragover', function(e) {
   e.preventDefault();
   dropzone.classList.add('drag-over');
 });
-mainArea.addEventListener('dragleave', (e) => {
+mainArea.addEventListener('dragleave', function(e) {
   if (!mainArea.contains(e.relatedTarget)) {
     dropzone.classList.remove('drag-over');
   }
 });
-mainArea.addEventListener('drop', (e) => {
+mainArea.addEventListener('drop', function(e) {
   e.preventDefault();
   dropzone.classList.remove('drag-over');
   if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
 });
 
-// Close modal on overlay click
-codeModal.addEventListener('click', (e) => {
+codeModal.addEventListener('click', function(e) {
   if (e.target === codeModal) closeModal();
 });
 
-// Keyboard shortcuts
-document.addEventListener('keydown', (e) => {
+document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') {
     closeModal();
-    if (selectedElement) deselectElement();
+    if (selectedElements.length) deselectAll();
   }
-  if ((e.ctrlKey || e.metaKey) && e.key === 'c' && selectedElement) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'c' && selectedElements.length) {
     e.preventDefault();
     copySelectedSVG();
   }
-  if (e.key === 'Delete' && selectedElement) deselectElement();
+  if (e.key === 'Delete' && selectedElements.length) deselectAll();
   if (e.key === '+' || e.key === '=') zoomIn();
   if (e.key === '-') zoomOut();
   if (e.key === '0') fitToView();
 });
 
-// Window resize
-window.addEventListener('resize', () => {
+window.addEventListener('resize', function() {
   if (currentSvgDoc) fitToView();
 });
 
@@ -1058,12 +1052,10 @@ window.addEventListener('resize', () => {
 // File handling
 // ==============================
 async function handleFile(file) {
-  const ext = file.name.split('.').pop().toLowerCase();
+  var ext = file.name.split('.').pop().toLowerCase();
   showLoading(true);
-
   try {
-    let svgText;
-
+    var svgText;
     if (ext === 'svg') {
       svgText = await file.text();
     } else if (ext === 'ai' || ext === 'pdf') {
@@ -1075,631 +1067,487 @@ async function handleFile(file) {
       showLoading(false);
       return;
     }
-
-    if (svgText) {
-      loadSvg(svgText, file.name);
-    }
+    if (svgText) loadSvg(svgText, file.name);
   } catch (err) {
     console.error('File processing error:', err);
     showToast('Error: ' + err.message);
   }
-
   showLoading(false);
 }
 
 // ==============================
-// PDF/AI to SVG conversion
-// Strategy: SVGGraphics (full fidelity) -> canvas high-DPI fallback
+// PDF/AI to SVG via pdf.js SVGGraphics (2.16.105 has it built in)
 // ==============================
 async function convertPdfToSvg(file) {
-  if (!pdfjsLib) {
-    throw new Error('PDF.js not loaded. PDF/AI files need PDF.js library.');
-  }
+  if (!pdfjsLib) throw new Error('PDF.js not loaded.');
+  var arrayBuffer = await file.arrayBuffer();
+  var pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+  var page = await pdf.getPage(1);
+  var vp = page.getViewport({ scale: 1 });
 
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  const page = await pdf.getPage(1);
-  const vp = page.getViewport({ scale: 1 });
-
-  // Method 1: SVGGraphics -- produces true vector SVG with all colors, gradients, fonts
-  if (SVGGraphicsClass) {
+  // pdf.js 2.x SVGGraphics
+  if (pdfjsLib.SVGGraphics) {
     try {
-      const opList = await page.getOperatorList();
-      const svgGfx = new SVGGraphicsClass(page.commonObjs, page.objs);
+      var opList = await page.getOperatorList();
+      var svgGfx = new pdfjsLib.SVGGraphics(page.commonObjs, page.objs);
       svgGfx.embedFonts = true;
-      const svgEl = await svgGfx.getSVG(opList, vp);
-
-      const serializer = new XMLSerializer();
-      let svgStr = serializer.serializeToString(svgEl);
-      if (!svgStr.includes('xmlns="http://www.w3.org/2000/svg"')) {
+      var svgEl = await svgGfx.getSVG(opList, vp);
+      var serializer = new XMLSerializer();
+      var svgStr = serializer.serializeToString(svgEl);
+      if (svgStr.indexOf('xmlns="http://www.w3.org/2000/svg"') === -1) {
         svgStr = svgStr.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
       }
       return svgStr;
-    } catch (svgErr) {
-      console.warn('SVGGraphics failed, falling back to canvas:', svgErr);
+    } catch (err) {
+      console.warn('SVGGraphics failed, using canvas fallback:', err);
     }
   }
 
-  // Method 2: Render to canvas at 3x resolution and embed as high-quality raster SVG
-  // Also extract vector paths as transparent overlays for element selection
-  const scale = 3;
-  const scaledVp = page.getViewport({ scale: scale });
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
+  // Fallback: high-DPI canvas render embedded in SVG
+  var scale = 3;
+  var scaledVp = page.getViewport({ scale: scale });
+  var canvas = document.createElement('canvas');
+  var ctx = canvas.getContext('2d');
   canvas.width = scaledVp.width;
   canvas.height = scaledVp.height;
   await page.render({ canvasContext: ctx, viewport: scaledVp }).promise;
-
-  const dataUrl = canvas.toDataURL('image/png');
-
-  // Extract vector contours for interactive selection overlay
-  const opList = await page.getOperatorList();
-  const vectorPaths = extractVectorPaths(opList, pdfjsLib.OPS);
-
-  // Build SVG: raster background + transparent vector overlays for selection
-  let svgContent = '<image href="' + dataUrl + '" width="' + rd(vp.width) + '" height="' + rd(vp.height) +
-    '" preserveAspectRatio="none" data-name="Background render"/>';
-
-  // Add transparent vector overlays (flipped Y since PDF origin is bottom-left)
-  if (vectorPaths.length > 0) {
-    svgContent += '<g transform="translate(0,' + rd(vp.height) + ') scale(1,-1)" opacity="0">';
-    for (let i = 0; i < vectorPaths.length; i++) {
-      svgContent += '<path d="' + vectorPaths[i].d + '" fill="' +
-        (vectorPaths[i].fill || 'black') + '" stroke="' + (vectorPaths[i].stroke || 'none') +
-        '" data-name="Element ' + (i + 1) + '"/>';
-    }
-    svgContent += '</g>';
-  }
-
+  var dataUrl = canvas.toDataURL('image/png');
   return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + rd(vp.width) + ' ' + rd(vp.height) +
-    '" width="' + rd(vp.width) + '" height="' + rd(vp.height) + '">' + svgContent + '</svg>';
-}
-
-// Extract basic vector path data from PDF operator list (for interactive overlays)
-function extractVectorPaths(opList, OPS) {
-  const paths = [];
-  let currentPath = '';
-  let fillColor = '#000';
-  let strokeColor = 'none';
-
-  for (let i = 0; i < opList.fnArray.length; i++) {
-    const fn = opList.fnArray[i];
-    const args = opList.argsArray[i];
-
-    switch (fn) {
-      case OPS.setFillRGBColor:
-        fillColor = rgbStr(args[0], args[1], args[2]); break;
-      case OPS.setStrokeRGBColor:
-        strokeColor = rgbStr(args[0], args[1], args[2]); break;
-      case OPS.setFillCMYKColor:
-        fillColor = cmykToRgb(args[0], args[1], args[2], args[3]); break;
-      case OPS.setStrokeCMYKColor:
-        strokeColor = cmykToRgb(args[0], args[1], args[2], args[3]); break;
-      case OPS.constructPath: {
-        const ops = args[0];
-        const pathArgs = args[1];
-        let argIdx = 0;
-        for (const op of ops) {
-          switch (op) {
-            case OPS.moveTo:
-              currentPath += 'M' + rd(pathArgs[argIdx]) + ' ' + rd(pathArgs[argIdx+1]);
-              argIdx += 2; break;
-            case OPS.lineTo:
-              currentPath += 'L' + rd(pathArgs[argIdx]) + ' ' + rd(pathArgs[argIdx+1]);
-              argIdx += 2; break;
-            case OPS.curveTo:
-              currentPath += 'C' + rd(pathArgs[argIdx]) + ' ' + rd(pathArgs[argIdx+1]) + ' ' +
-                rd(pathArgs[argIdx+2]) + ' ' + rd(pathArgs[argIdx+3]) + ' ' +
-                rd(pathArgs[argIdx+4]) + ' ' + rd(pathArgs[argIdx+5]);
-              argIdx += 6; break;
-            case OPS.curveTo2:
-              currentPath += 'S' + rd(pathArgs[argIdx]) + ' ' + rd(pathArgs[argIdx+1]) + ' ' +
-                rd(pathArgs[argIdx+2]) + ' ' + rd(pathArgs[argIdx+3]);
-              argIdx += 4; break;
-            case OPS.curveTo3:
-              currentPath += 'Q' + rd(pathArgs[argIdx]) + ' ' + rd(pathArgs[argIdx+1]) + ' ' +
-                rd(pathArgs[argIdx+2]) + ' ' + rd(pathArgs[argIdx+3]);
-              argIdx += 4; break;
-            case OPS.closePath:
-              currentPath += 'Z'; break;
-            case OPS.rectangle:
-              currentPath += 'M' + rd(pathArgs[argIdx]) + ' ' + rd(pathArgs[argIdx+1]) +
-                'h' + rd(pathArgs[argIdx+2]) + 'v' + rd(pathArgs[argIdx+3]) +
-                'h' + rd(-pathArgs[argIdx+2]) + 'Z';
-              argIdx += 4; break;
-          }
-        }
-        break;
-      }
-      case OPS.fill: case OPS.eoFill:
-        if (currentPath) { paths.push({ d: currentPath, fill: fillColor, stroke: 'none' }); currentPath = ''; } break;
-      case OPS.stroke:
-        if (currentPath) { paths.push({ d: currentPath, fill: 'none', stroke: strokeColor }); currentPath = ''; } break;
-      case OPS.fillStroke: case OPS.eoFillStroke:
-        if (currentPath) { paths.push({ d: currentPath, fill: fillColor, stroke: strokeColor }); currentPath = ''; } break;
-      case OPS.endPath:
-        currentPath = ''; break;
-    }
-  }
-  return paths;
+    '" width="' + rd(vp.width) + '" height="' + rd(vp.height) + '">' +
+    '<image href="' + dataUrl + '" width="' + rd(vp.width) + '" height="' + rd(vp.height) + '" data-name="Raster"/></svg>';
 }
 
 function rd(n) { return Math.round(n * 100) / 100; }
-
-function rgbStr(r, g, b) {
-  return 'rgb(' + Math.round(r*255) + ',' + Math.round(g*255) + ',' + Math.round(b*255) + ')';
-}
-
-function cmykToRgb(c, m, y, k) {
-  return 'rgb(' + Math.round(255*(1-c)*(1-k)) + ',' + Math.round(255*(1-m)*(1-k)) + ',' + Math.round(255*(1-y)*(1-k)) + ')';
-}
+function rgbStr(r, g, b) { return 'rgb(' + Math.round(r*255) + ',' + Math.round(g*255) + ',' + Math.round(b*255) + ')'; }
+function cmykToRgb(c, m, y, k) { return 'rgb(' + Math.round(255*(1-c)*(1-k)) + ',' + Math.round(255*(1-m)*(1-k)) + ',' + Math.round(255*(1-y)*(1-k)) + ')'; }
 
 // ==============================
-// EPS to SVG (basic PostScript paths)
+// EPS to SVG
 // ==============================
 async function convertEpsToSvg(file) {
-  const text = await file.text();
+  var text = await file.text();
+  var bbMatch = text.match(/%%BoundingBox:\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+  var width = 612, height = 792;
+  if (bbMatch) { width = parseFloat(bbMatch[3]) - parseFloat(bbMatch[1]); height = parseFloat(bbMatch[4]) - parseFloat(bbMatch[2]); }
 
-  let bbMatch = text.match(/%%BoundingBox:\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
-  let width = 612, height = 792;
-  if (bbMatch) {
-    width = parseFloat(bbMatch[3]) - parseFloat(bbMatch[1]);
-    height = parseFloat(bbMatch[4]) - parseFloat(bbMatch[2]);
-  }
-
-  const svgPaths = [];
-  let currentPath = '';
-  let fillColor = '#000000';
-  let strokeColor = '#000000';
-  let strokeWidth = 1;
-  let pathCount = 0;
-  let stack = [];
-  const lines = text.split('\n');
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith('%')) continue;
-
-    const tokens = trimmed.split(/\s+/);
-    for (const token of tokens) {
-      const num = parseFloat(token);
+  var svgPaths = [], currentPath = '', fillColor = '#000', strokeColor = '#000', strokeWidth = 1, pathCount = 0, stack = [];
+  var lines = text.split('\n');
+  for (var li = 0; li < lines.length; li++) {
+    var trimmed = lines[li].trim();
+    if (trimmed.charAt(0) === '%') continue;
+    var tokens = trimmed.split(/\s+/);
+    for (var ti = 0; ti < tokens.length; ti++) {
+      var token = tokens[ti], num = parseFloat(token);
       if (!isNaN(num) && isFinite(num)) { stack.push(num); continue; }
-
+      var y, x, y3, x3, y2, x2, y1, x1, b, g, rv, k2, m2, cv, w, gv, v;
       switch (token) {
-        case 'moveto': case 'm': {
-          const y = stack.pop(), x = stack.pop();
-          if (x !== undefined) currentPath += 'M' + rd(x) + ' ' + rd(y);
-          break;
-        }
-        case 'lineto': case 'l': {
-          const y = stack.pop(), x = stack.pop();
-          if (x !== undefined) currentPath += 'L' + rd(x) + ' ' + rd(y);
-          break;
-        }
-        case 'curveto': case 'c': {
-          const y3 = stack.pop(), x3 = stack.pop();
-          const y2 = stack.pop(), x2 = stack.pop();
-          const y1 = stack.pop(), x1 = stack.pop();
-          if (x1 !== undefined) currentPath += 'C' + rd(x1) + ' ' + rd(y1) + ' ' + rd(x2) + ' ' + rd(y2) + ' ' + rd(x3) + ' ' + rd(y3);
-          break;
-        }
-        case 'closepath': case 'cp':
-          currentPath += 'Z'; break;
-        case 'fill': case 'f':
-          if (currentPath) {
-            pathCount++;
-            svgPaths.push('<path d="' + currentPath + '" fill="' + fillColor + '" data-name="Path ' + pathCount + '"/>');
-            currentPath = '';
-          }
-          break;
-        case 'stroke': case 's':
-          if (currentPath) {
-            pathCount++;
-            svgPaths.push('<path d="' + currentPath + '" fill="none" stroke="' + strokeColor + '" stroke-width="' + strokeWidth + '" data-name="Path ' + pathCount + '"/>');
-            currentPath = '';
-          }
-          break;
-        case 'setrgbcolor': {
-          const b = stack.pop(), g = stack.pop(), rv = stack.pop();
-          if (rv !== undefined) { const c = rgbStr(rv, g, b); fillColor = c; strokeColor = c; }
-          break;
-        }
-        case 'setcmykcolor': {
-          const k = stack.pop(), y = stack.pop(), m = stack.pop(), cv = stack.pop();
-          if (cv !== undefined) { const c = cmykToRgb(cv, m, y, k); fillColor = c; strokeColor = c; }
-          break;
-        }
-        case 'setlinewidth': {
-          const w = stack.pop();
-          if (w !== undefined) strokeWidth = w;
-          break;
-        }
-        case 'setgray': {
-          const g = stack.pop();
-          if (g !== undefined) { const v = Math.round(g*255); fillColor = 'rgb(' + v + ',' + v + ',' + v + ')'; strokeColor = fillColor; }
-          break;
-        }
-        case 'newpath':
-          currentPath = ''; stack = []; break;
+        case 'moveto': case 'm': y = stack.pop(); x = stack.pop(); if (x !== undefined) currentPath += 'M' + rd(x) + ' ' + rd(y); break;
+        case 'lineto': case 'l': y = stack.pop(); x = stack.pop(); if (x !== undefined) currentPath += 'L' + rd(x) + ' ' + rd(y); break;
+        case 'curveto': case 'c': y3 = stack.pop(); x3 = stack.pop(); y2 = stack.pop(); x2 = stack.pop(); y1 = stack.pop(); x1 = stack.pop(); if (x1 !== undefined) currentPath += 'C' + rd(x1) + ' ' + rd(y1) + ' ' + rd(x2) + ' ' + rd(y2) + ' ' + rd(x3) + ' ' + rd(y3); break;
+        case 'closepath': case 'cp': currentPath += 'Z'; break;
+        case 'fill': case 'f': if (currentPath) { pathCount++; svgPaths.push('<path d="' + currentPath + '" fill="' + fillColor + '" data-name="Path ' + pathCount + '"/>'); currentPath = ''; } break;
+        case 'stroke': case 's': if (currentPath) { pathCount++; svgPaths.push('<path d="' + currentPath + '" fill="none" stroke="' + strokeColor + '" stroke-width="' + strokeWidth + '" data-name="Path ' + pathCount + '"/>'); currentPath = ''; } break;
+        case 'setrgbcolor': b = stack.pop(); g = stack.pop(); rv = stack.pop(); if (rv !== undefined) { var cc = rgbStr(rv, g, b); fillColor = cc; strokeColor = cc; } break;
+        case 'setcmykcolor': k2 = stack.pop(); y = stack.pop(); m2 = stack.pop(); cv = stack.pop(); if (cv !== undefined) { var cc2 = cmykToRgb(cv, m2, y, k2); fillColor = cc2; strokeColor = cc2; } break;
+        case 'setlinewidth': w = stack.pop(); if (w !== undefined) strokeWidth = w; break;
+        case 'setgray': gv = stack.pop(); if (gv !== undefined) { v = Math.round(gv * 255); fillColor = 'rgb(' + v + ',' + v + ',' + v + ')'; strokeColor = fillColor; } break;
+        case 'newpath': currentPath = ''; stack = []; break;
       }
     }
   }
-
-  if (svgPaths.length === 0) {
-    throw new Error('No vector data found in EPS. Unsupported PostScript operators.');
-  }
-
-  return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + rd(width) + ' ' + rd(height) +
-    '" width="' + rd(width) + '" height="' + rd(height) + '">' +
-    '<g transform="translate(0,' + rd(height) + ') scale(1,-1)">' +
-    svgPaths.join('') + '</g></svg>';
+  if (svgPaths.length === 0) throw new Error('No vector data found in EPS.');
+  return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + rd(width) + ' ' + rd(height) + '" width="' + rd(width) + '" height="' + rd(height) + '"><g transform="translate(0,' + rd(height) + ') scale(1,-1)">' + svgPaths.join('') + '</g></svg>';
 }
 
 // ==============================
 // Load SVG into canvas
 // ==============================
 function loadSvg(svgText, fileName) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(svgText, 'image/svg+xml');
-  const svgEl = doc.querySelector('svg');
-
+  var parser = new DOMParser();
+  var doc = parser.parseFromString(svgText, 'image/svg+xml');
+  var svgEl = doc.querySelector('svg');
   if (!svgEl) { showToast('Invalid SVG data'); return; }
-
   svgEl.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   currentSvgDoc = svgEl;
-
-  // Clear viewport and append clone
   while (viewport.firstChild) viewport.removeChild(viewport.firstChild);
   viewport.appendChild(svgEl.cloneNode(true));
-
-  const displaySvg = viewport.querySelector('svg');
+  var displaySvg = viewport.querySelector('svg');
   makeElementsInteractive(displaySvg);
   buildLayerTree(displaySvg);
-
   dropzone.classList.add('hidden');
   container.style.display = 'block';
   bottombar.style.display = 'flex';
   document.getElementById('btnClearAll').style.display = '';
   document.getElementById('fileInfo').textContent = fileName;
-
   zoom = 1; panX = 0; panY = 0;
-  requestAnimationFrame(() => fitToView());
+  requestAnimationFrame(function() { fitToView(); });
 }
 
 // ==============================
 // Make SVG elements interactive
 // ==============================
 function makeElementsInteractive(svgEl) {
-  const interactiveTypes = new Set(['path', 'rect', 'circle', 'ellipse', 'polygon', 'polyline', 'line', 'text', 'image', 'use']);
-
+  var interactiveTypes = { path: 1, rect: 1, circle: 1, ellipse: 1, polygon: 1, polyline: 1, line: 1, text: 1, image: 1, use: 1 };
   function processElement(el) {
-    const tag = el.tagName && el.tagName.toLowerCase();
-    if (interactiveTypes.has(tag)) {
+    var tag = el.tagName && el.tagName.toLowerCase();
+    if (interactiveTypes[tag]) {
       el.classList.add('svg-element-interactive');
-      el.addEventListener('mouseenter', (e) => { e.stopPropagation(); hoverElement(el); });
-      el.addEventListener('mouseleave', () => unhoverElement(el));
-      el.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); selectElement(el); });
+      el.addEventListener('mouseenter', function(e) { e.stopPropagation(); hoverElement(el); });
+      el.addEventListener('mouseleave', function() { unhoverElement(el); });
+      el.addEventListener('click', function(e) { e.stopPropagation(); e.preventDefault(); toggleSelectElement(el, e.ctrlKey || e.metaKey || e.shiftKey); });
     }
-    if (el.children) {
-      for (const child of el.children) processElement(child);
-    }
+    if (el.children) { for (var i = 0; i < el.children.length; i++) processElement(el.children[i]); }
   }
-
-  svgEl.addEventListener('click', (e) => {
-    if (e.target === svgEl) deselectElement();
-  });
-
+  svgEl.addEventListener('click', function(e) { if (e.target === svgEl) deselectAll(); });
   processElement(svgEl);
 }
 
 // ==============================
-// Hover / Select
+// Hover
 // ==============================
 function hoverElement(el) {
-  if (hoveredElement && hoveredElement !== el) {
-    hoveredElement.classList.remove('element-highlight-hover');
-  }
+  if (hoveredElement && hoveredElement !== el) hoveredElement.classList.remove('element-highlight-hover');
   hoveredElement = el;
   el.classList.add('element-highlight-hover');
-
-  const idx = getElementIndex(el);
-  layerTree.querySelectorAll('.layer-item.hovered').forEach(li => li.classList.remove('hovered'));
-  const layerItem = layerTree.querySelector('.layer-item[data-index="' + idx + '"]');
+  var idx = getElementIndex(el);
+  layerTree.querySelectorAll('.layer-item.hovered').forEach(function(li) { li.classList.remove('hovered'); });
+  var layerItem = layerTree.querySelector('.layer-item[data-index="' + idx + '"]');
   if (layerItem) layerItem.classList.add('hovered');
 }
 
 function unhoverElement(el) {
   el.classList.remove('element-highlight-hover');
   if (hoveredElement === el) hoveredElement = null;
-  layerTree.querySelectorAll('.layer-item.hovered').forEach(li => li.classList.remove('hovered'));
+  layerTree.querySelectorAll('.layer-item.hovered').forEach(function(li) { li.classList.remove('hovered'); });
 }
 
-function selectElement(el) {
-  viewport.querySelectorAll('.element-highlight-selected').forEach(e => e.classList.remove('element-highlight-selected'));
-  layerTree.querySelectorAll('.layer-item.selected').forEach(li => li.classList.remove('selected'));
-
-  selectedElement = el;
-  el.classList.add('element-highlight-selected');
-  el.classList.remove('element-highlight-hover');
-
-  showSelectionPanel(el);
-
-  const idx = getElementIndex(el);
-  const layerItem = layerTree.querySelector('.layer-item[data-index="' + idx + '"]');
-  if (layerItem) {
-    layerItem.classList.add('selected');
-    layerItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+// ==============================
+// Multi-select: click and marquee
+// ==============================
+function toggleSelectElement(el, additive) {
+  if (!additive) {
+    // Single select -- clear others
+    selectedElements.forEach(function(sel) { sel.classList.remove('element-highlight-selected'); });
+    layerTree.querySelectorAll('.layer-item.selected').forEach(function(li) { li.classList.remove('selected'); });
+    selectedElements = [];
   }
+  var idx = selectedElements.indexOf(el);
+  if (idx >= 0) {
+    // Deselect this element
+    el.classList.remove('element-highlight-selected');
+    selectedElements.splice(idx, 1);
+    var li = layerTree.querySelector('.layer-item[data-index="' + getElementIndex(el) + '"]');
+    if (li) li.classList.remove('selected');
+  } else {
+    // Select this element
+    el.classList.add('element-highlight-selected');
+    el.classList.remove('element-highlight-hover');
+    selectedElements.push(el);
+    var li2 = layerTree.querySelector('.layer-item[data-index="' + getElementIndex(el) + '"]');
+    if (li2) { li2.classList.add('selected'); li2.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+  }
+  updateSelectionPanel();
 }
 
-function deselectElement() {
-  if (selectedElement) {
-    selectedElement.classList.remove('element-highlight-selected');
-    selectedElement = null;
+function selectElementsInRect(screenRect) {
+  // Get all interactive elements and check if their screen bounding box intersects the marquee
+  var allEls = viewport.querySelectorAll('.svg-element-interactive');
+  var newSelection = [];
+  for (var i = 0; i < allEls.length; i++) {
+    var el = allEls[i];
+    try {
+      var bbox = el.getBoundingClientRect();
+      if (rectsIntersect(screenRect, { left: bbox.left, top: bbox.top, right: bbox.right, bottom: bbox.bottom })) {
+        newSelection.push(el);
+      }
+    } catch (e) {}
   }
-  layerTree.querySelectorAll('.layer-item.selected').forEach(li => li.classList.remove('selected'));
+  // Clear previous selection
+  selectedElements.forEach(function(sel) { sel.classList.remove('element-highlight-selected'); });
+  layerTree.querySelectorAll('.layer-item.selected').forEach(function(li) { li.classList.remove('selected'); });
+  // Apply new
+  selectedElements = newSelection;
+  selectedElements.forEach(function(el) {
+    el.classList.add('element-highlight-selected');
+    var li = layerTree.querySelector('.layer-item[data-index="' + getElementIndex(el) + '"]');
+    if (li) li.classList.add('selected');
+  });
+  updateSelectionPanel();
+}
+
+function rectsIntersect(a, b) {
+  return !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom);
+}
+
+function deselectAll() {
+  selectedElements.forEach(function(el) { el.classList.remove('element-highlight-selected'); });
+  layerTree.querySelectorAll('.layer-item.selected').forEach(function(li) { li.classList.remove('selected'); });
+  selectedElements = [];
   selectionPanel.classList.remove('visible');
 }
 
 function getElementIndex(el) {
-  const allElements = viewport.querySelectorAll('.svg-element-interactive');
-  return Array.from(allElements).indexOf(el);
+  var allElements = viewport.querySelectorAll('.svg-element-interactive');
+  for (var i = 0; i < allElements.length; i++) { if (allElements[i] === el) return i; }
+  return -1;
 }
 
 // ==============================
-// Selection Panel
+// Selection Panel (supports multi-select)
 // ==============================
-function showSelectionPanel(el) {
-  const tag = el.tagName.toLowerCase();
-  const name = el.getAttribute('data-name') || el.getAttribute('id') || el.getAttribute('class') || tag;
-
+function updateSelectionPanel() {
+  if (selectedElements.length === 0) {
+    selectionPanel.classList.remove('visible');
+    return;
+  }
   // Preview
-  const previewSvg = generateElementSvg(el);
+  var previewSvg = generateSelectionSvg(selectedElements);
   while (selectionPreview.firstChild) selectionPreview.removeChild(selectionPreview.firstChild);
-  const previewParser = new DOMParser();
-  const previewDoc = previewParser.parseFromString(previewSvg, 'image/svg+xml');
-  const previewSvgEl = previewDoc.querySelector('svg');
+  var previewParser = new DOMParser();
+  var previewDoc = previewParser.parseFromString(previewSvg, 'image/svg+xml');
+  var previewSvgEl = previewDoc.querySelector('svg');
   if (previewSvgEl) selectionPreview.appendChild(document.importNode(previewSvgEl, true));
 
   // Metadata
-  let bbox;
-  try { bbox = el.getBBox(); } catch (e) { bbox = { x: 0, y: 0, width: 0, height: 0 }; }
-
   while (selectionMeta.firstChild) selectionMeta.removeChild(selectionMeta.firstChild);
-  const metaItems = [
-    { label: 'Type', value: tag },
-    { label: 'Name', value: name },
-    { label: 'Size', value: rd(bbox.width) + ' x ' + rd(bbox.height) },
-    { label: 'Position', value: rd(bbox.x) + ', ' + rd(bbox.y) }
-  ];
-  for (const item of metaItems) {
-    const div = document.createElement('div');
+  var metaItems;
+  if (selectedElements.length === 1) {
+    var el = selectedElements[0];
+    var tag = el.tagName.toLowerCase();
+    var name = el.getAttribute('data-name') || el.getAttribute('id') || el.getAttribute('class') || tag;
+    var bbox;
+    try { bbox = el.getBBox(); } catch (e) { bbox = { x: 0, y: 0, width: 0, height: 0 }; }
+    metaItems = [
+      { label: 'Type', value: tag },
+      { label: 'Name', value: name },
+      { label: 'Size', value: rd(bbox.width) + ' x ' + rd(bbox.height) },
+      { label: 'Position', value: rd(bbox.x) + ', ' + rd(bbox.y) }
+    ];
+  } else {
+    metaItems = [
+      { label: 'Selected', value: selectedElements.length + ' elements' },
+      { label: 'Types', value: getUniqueTypes(selectedElements) }
+    ];
+  }
+  for (var i = 0; i < metaItems.length; i++) {
+    var div = document.createElement('div');
     div.className = 'selection-meta-item';
-    const labelSpan = document.createElement('span');
+    var labelSpan = document.createElement('span');
     labelSpan.className = 'selection-meta-label';
-    labelSpan.textContent = item.label;
-    const valueSpan = document.createElement('span');
+    labelSpan.textContent = metaItems[i].label;
+    var valueSpan = document.createElement('span');
     valueSpan.className = 'selection-meta-value';
-    valueSpan.textContent = item.value;
+    valueSpan.textContent = metaItems[i].value;
     div.appendChild(labelSpan);
     div.appendChild(valueSpan);
     selectionMeta.appendChild(div);
   }
-
+  document.querySelector('.selection-panel-title').textContent = selectedElements.length === 1 ? 'Selected element' : selectedElements.length + ' elements selected';
   selectionPanel.classList.add('visible');
 }
 
+function getUniqueTypes(els) {
+  var types = {};
+  for (var i = 0; i < els.length; i++) types[els[i].tagName.toLowerCase()] = true;
+  return Object.keys(types).join(', ');
+}
+
 // ==============================
-// Generate standalone SVG from element
+// Generate SVG from selected elements (single or multi)
 // ==============================
-function generateElementSvg(el) {
-  const clone = el.cloneNode(true);
-  clone.classList.remove('svg-element-interactive', 'element-highlight-hover', 'element-highlight-selected');
+function generateSelectionSvg(elements) {
+  if (elements.length === 0) return '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
 
-  let bbox;
-  try { bbox = el.getBBox(); } catch (e) { bbox = { x: 0, y: 0, width: 100, height: 100 }; }
+  var serializer = new XMLSerializer();
+  var svgRoot = viewport.querySelector('svg');
 
-  const padding = Math.max(bbox.width, bbox.height) * 0.1;
-  const vbX = rd(bbox.x - padding);
-  const vbY = rd(bbox.y - padding);
-  const vbW = rd(bbox.width + padding * 2);
-  const vbH = rd(bbox.height + padding * 2);
-
-  // Collect inherited transforms
-  const transforms = [];
-  let parent = el.parentElement;
-  while (parent && parent.tagName && parent.tagName.toLowerCase() !== 'svg') {
-    const t = parent.getAttribute('transform');
-    if (t) transforms.unshift(t);
-    parent = parent.parentElement;
+  // Compute combined bounding box
+  var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (var i = 0; i < elements.length; i++) {
+    try {
+      var bbox = elements[i].getBBox();
+      // Account for parent transforms to get true coordinates
+      var ctm = elements[i].getCTM();
+      var svgCtm = svgRoot.getCTM();
+      if (ctm && svgCtm) {
+        // Transform all 4 corners of bbox
+        var pts = [
+          transformPoint(bbox.x, bbox.y, ctm, svgCtm),
+          transformPoint(bbox.x + bbox.width, bbox.y, ctm, svgCtm),
+          transformPoint(bbox.x, bbox.y + bbox.height, ctm, svgCtm),
+          transformPoint(bbox.x + bbox.width, bbox.y + bbox.height, ctm, svgCtm)
+        ];
+        for (var p = 0; p < pts.length; p++) {
+          if (pts[p].x < minX) minX = pts[p].x;
+          if (pts[p].y < minY) minY = pts[p].y;
+          if (pts[p].x > maxX) maxX = pts[p].x;
+          if (pts[p].y > maxY) maxY = pts[p].y;
+        }
+      } else {
+        if (bbox.x < minX) minX = bbox.x;
+        if (bbox.y < minY) minY = bbox.y;
+        if (bbox.x + bbox.width > maxX) maxX = bbox.x + bbox.width;
+        if (bbox.y + bbox.height > maxY) maxY = bbox.y + bbox.height;
+      }
+    } catch (e) {}
   }
 
-  const serializer = new XMLSerializer();
-  let inner = serializer.serializeToString(clone);
-  if (transforms.length > 0) {
-    inner = '<g transform="' + transforms.join(' ') + '">' + inner + '</g>';
-  }
+  var padding = Math.max(maxX - minX, maxY - minY) * 0.05;
+  if (!isFinite(padding) || padding < 1) padding = 5;
+  var vbX = rd(minX - padding);
+  var vbY = rd(minY - padding);
+  var vbW = rd((maxX - minX) + padding * 2);
+  var vbH = rd((maxY - minY) + padding * 2);
 
   // Collect defs
-  const svgRoot = viewport.querySelector('svg');
-  const defs = svgRoot ? svgRoot.querySelector('defs') : null;
-  let defsStr = '';
-  if (defs) defsStr = serializer.serializeToString(defs);
+  var defs = svgRoot ? svgRoot.querySelector('defs') : null;
+  var defsStr = defs ? serializer.serializeToString(defs) : '';
+
+  // Clone elements with their parent transforms
+  var inner = '';
+  for (var j = 0; j < elements.length; j++) {
+    var clone = elements[j].cloneNode(true);
+    clone.classList.remove('svg-element-interactive', 'element-highlight-hover', 'element-highlight-selected');
+    var cloneStr = serializer.serializeToString(clone);
+
+    // Collect transforms from parent groups
+    var transforms = [];
+    var parent = elements[j].parentElement;
+    while (parent && parent.tagName && parent.tagName.toLowerCase() !== 'svg') {
+      var t = parent.getAttribute('transform');
+      if (t) transforms.unshift(t);
+      parent = parent.parentElement;
+    }
+    if (transforms.length > 0) {
+      cloneStr = '<g transform="' + transforms.join(' ') + '">' + cloneStr + '</g>';
+    }
+    inner += cloneStr;
+  }
 
   return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="' + vbX + ' ' + vbY + ' ' + vbW + ' ' + vbH + '">' + defsStr + inner + '</svg>';
+}
+
+function transformPoint(x, y, ctm, svgCtm) {
+  // Get element position in SVG coordinate system
+  var invSvgCtm = svgCtm.inverse();
+  var combined = invSvgCtm.multiply(ctm);
+  return { x: combined.a * x + combined.c * y + combined.e, y: combined.b * x + combined.d * y + combined.f };
 }
 
 // ==============================
 // SVG Optimization
 // ==============================
 function optimizeSvg(svgString) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(svgString, 'image/svg+xml');
-  const svg = doc.querySelector('svg');
+  var parser = new DOMParser();
+  var doc = parser.parseFromString(svgString, 'image/svg+xml');
+  var svg = doc.querySelector('svg');
   if (!svg) return svgString;
 
-  // Remove metadata, title, desc
-  svg.querySelectorAll('metadata, title, desc').forEach(el => el.remove());
-
+  svg.querySelectorAll('metadata, title, desc').forEach(function(el) { el.remove(); });
   // Remove comments
-  const walker = document.createTreeWalker(svg, NodeFilter.SHOW_COMMENT, null);
-  const comments = [];
+  var walker = document.createTreeWalker(svg, NodeFilter.SHOW_COMMENT, null);
+  var comments = [];
   while (walker.nextNode()) comments.push(walker.currentNode);
-  comments.forEach(c => c.remove());
+  comments.forEach(function(c) { c.remove(); });
 
-  // Attributes to strip
-  const removeAttrs = [
-    'data-name', 'data-layer',
-    'xmlns:xlink', 'xmlns:sodipodi', 'xmlns:inkscape',
-    'xml:space'
-  ];
-
-  walkDom(svg, (el) => {
-    const attrsToRemove = [];
-    for (const attr of el.attributes) {
-      if (removeAttrs.includes(attr.name) ||
-          attr.name.startsWith('sodipodi:') ||
-          attr.name.startsWith('inkscape:') ||
-          attr.name.startsWith('data-')) {
-        attrsToRemove.push(attr.name);
-      }
+  var removeAttrs = ['data-name', 'data-layer', 'xmlns:xlink', 'xmlns:sodipodi', 'xmlns:inkscape', 'xml:space'];
+  walkDom(svg, function(el) {
+    var attrsToRemove = [];
+    for (var i = 0; i < el.attributes.length; i++) {
+      var aname = el.attributes[i].name;
+      if (removeAttrs.indexOf(aname) >= 0 || aname.indexOf('sodipodi:') === 0 || aname.indexOf('inkscape:') === 0 || aname.indexOf('data-') === 0) attrsToRemove.push(aname);
     }
-    attrsToRemove.forEach(a => el.removeAttribute(a));
-
-    // Clean classes
+    attrsToRemove.forEach(function(a) { el.removeAttribute(a); });
     if (el.classList) {
       el.classList.remove('svg-element-interactive', 'element-highlight-hover', 'element-highlight-selected');
       if (el.getAttribute('class') === '') el.removeAttribute('class');
     }
-
-    // Simplify path data
-    if (el.tagName === 'path' && el.getAttribute('d')) {
-      el.setAttribute('d', simplifyPathData(el.getAttribute('d')));
+    if (el.tagName === 'path' && el.getAttribute('d')) el.setAttribute('d', simplifyPathData(el.getAttribute('d')));
+    var numericAttrs = ['x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'r', 'rx', 'ry', 'width', 'height', 'stroke-width', 'opacity', 'font-size'];
+    for (var j = 0; j < numericAttrs.length; j++) {
+      var val = el.getAttribute(numericAttrs[j]);
+      if (val && !isNaN(parseFloat(val))) el.setAttribute(numericAttrs[j], rd(parseFloat(val)).toString());
     }
-
-    // Round numeric attrs
-    const numericAttrs = ['x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'r', 'rx', 'ry', 'width', 'height', 'stroke-width', 'opacity', 'font-size'];
-    for (const attr of numericAttrs) {
-      const val = el.getAttribute(attr);
-      if (val && !isNaN(parseFloat(val))) {
-        el.setAttribute(attr, rd(parseFloat(val)).toString());
-      }
-    }
-
-    // Remove default values
     if (el.getAttribute('fill-opacity') === '1') el.removeAttribute('fill-opacity');
     if (el.getAttribute('stroke-opacity') === '1') el.removeAttribute('stroke-opacity');
     if (el.getAttribute('opacity') === '1') el.removeAttribute('opacity');
     if (el.getAttribute('fill-rule') === 'nonzero') el.removeAttribute('fill-rule');
   });
 
-  // Simplify transforms
-  walkDom(svg, (el) => {
-    const transform = el.getAttribute('transform');
+  // Clean trivial transforms
+  walkDom(svg, function(el) {
+    var transform = el.getAttribute('transform');
     if (!transform) return;
-    if (/^translate\(0[, ]0\)$/.test(transform.trim()) || transform.trim() === 'translate(0)') el.removeAttribute('transform');
-    if (/^scale\(1[, ]1\)$/.test(transform.trim()) || transform.trim() === 'scale(1)') el.removeAttribute('transform');
+    var t = transform.trim();
+    if (/^translate\(0[, ]0\)$/.test(t) || t === 'translate(0)' || /^scale\(1[, ]1\)$/.test(t) || t === 'scale(1)') el.removeAttribute('transform');
   });
 
   // Remove empty groups
-  let changed = true;
+  var changed = true;
   while (changed) {
     changed = false;
-    svg.querySelectorAll('g').forEach(g => {
-      if (g.children.length === 0 && g.textContent.trim() === '') {
-        g.remove(); changed = true;
-      }
-      if (g.children.length === 1 && !g.getAttribute('transform') &&
-          !g.getAttribute('clip-path') && !g.getAttribute('mask') &&
-          !g.getAttribute('filter') && !g.getAttribute('opacity')) {
-        g.replaceWith(g.children[0]); changed = true;
-      }
+    svg.querySelectorAll('g').forEach(function(g) {
+      if (g.children.length === 0 && g.textContent.trim() === '') { g.remove(); changed = true; }
+      else if (g.children.length === 1 && !g.getAttribute('transform') && !g.getAttribute('clip-path') && !g.getAttribute('mask') && !g.getAttribute('filter') && !g.getAttribute('opacity')) { g.replaceWith(g.children[0]); changed = true; }
     });
   }
 
-  let result = new XMLSerializer().serializeToString(svg);
+  var result = new XMLSerializer().serializeToString(svg);
   result = result.replace(/<\?xml[^?]*\?>/, '');
-
-  // Clean duplicate xmlns
-  let first = true;
-  result = result.replace(/ xmlns="http:\/\/www\.w3\.org\/2000\/svg"/g, (match) => {
-    if (first) { first = false; return match; }
-    return '';
-  });
-
-  // Minify then re-format
+  var first = true;
+  result = result.replace(/ xmlns="http:\/\/www\.w3\.org\/2000\/svg"/g, function(match) { if (first) { first = false; return match; } return ''; });
   result = result.replace(/>\s+</g, '><');
-  result = formatSvg(result);
-
-  return result;
+  return formatSvg(result);
 }
 
 function walkDom(el, callback) {
-  if (el.nodeType === 1) {
-    callback(el);
-    for (const child of el.children) walkDom(child, callback);
-  }
+  if (el.nodeType === 1) { callback(el); for (var i = 0; i < el.children.length; i++) walkDom(el.children[i], callback); }
 }
 
 function simplifyPathData(d) {
-  return d.replace(/-?\d+\.?\d*/g, (match) => {
-    const num = parseFloat(match);
-    if (isNaN(num)) return match;
-    return (Math.round(num * 100) / 100).toString();
-  }).replace(/\s+/g, ' ').replace(/ ([MCLZSQTAHVmclzsqtahv])/g, '$1').replace(/([MCLZSQTAHVmclzsqtahv]) /g, '$1').trim();
+  return d.replace(/-?\d+\.?\d*/g, function(match) { var num = parseFloat(match); if (isNaN(num)) return match; return (Math.round(num * 100) / 100).toString(); }).replace(/\s+/g, ' ').replace(/ ([MCLZSQTAHVmclzsqtahv])/g, '$1').replace(/([MCLZSQTAHVmclzsqtahv]) /g, '$1').trim();
 }
 
 function formatSvg(svg) {
-  let formatted = '';
-  let indent = 0;
-  const tags = svg.replace(/></g, '>\n<').split('\n');
-  for (const tag of tags) {
-    const trimmed = tag.trim();
+  var formatted = '', indent = 0;
+  var tags = svg.replace(/></g, '>\n<').split('\n');
+  for (var i = 0; i < tags.length; i++) {
+    var trimmed = tags[i].trim();
     if (!trimmed) continue;
-    if (trimmed.startsWith('</')) indent--;
+    if (trimmed.indexOf('</') === 0) indent--;
     formatted += '  '.repeat(Math.max(0, indent)) + trimmed + '\n';
-    if (trimmed.startsWith('<') && !trimmed.startsWith('</') && !trimmed.endsWith('/>') && !trimmed.includes('</')) indent++;
+    if (trimmed.charAt(0) === '<' && trimmed.indexOf('</') !== 0 && trimmed.indexOf('/>') === -1 && trimmed.indexOf('</') === -1) indent++;
   }
   return formatted.trim();
 }
 
 // ==============================
-// Copy / Show code
+// Copy / Show code (multi-select aware)
 // ==============================
 async function copySelectedSVG() {
-  if (!selectedElement) return;
-  const optimized = optimizeSvg(generateElementSvg(selectedElement));
-  try {
-    await navigator.clipboard.writeText(optimized);
-  } catch (err) {
-    fallbackCopy(optimized);
-  }
-  showToast('SVG copied to clipboard');
+  if (!selectedElements.length) return;
+  var optimized = optimizeSvg(generateSelectionSvg(selectedElements));
+  try { await navigator.clipboard.writeText(optimized); } catch (err) { fallbackCopy(optimized); }
+  showToast('SVG copied (' + selectedElements.length + ' element' + (selectedElements.length > 1 ? 's' : '') + ')');
 }
 
 function showSVGCode() {
-  if (!selectedElement) return;
-  const optimized = optimizeSvg(generateElementSvg(selectedElement));
+  if (!selectedElements.length) return;
+  var optimized = optimizeSvg(generateSelectionSvg(selectedElements));
   codeContent.textContent = optimized;
   codeModal.classList.add('visible');
 }
 
 async function copyFromModal() {
-  const code = codeContent.textContent;
-  try {
-    await navigator.clipboard.writeText(code);
-  } catch (err) {
-    fallbackCopy(code);
-  }
+  var code = codeContent.textContent;
+  try { await navigator.clipboard.writeText(code); } catch (err) { fallbackCopy(code); }
   showToast('SVG copied to clipboard');
 }
 
-function closeModal() {
-  codeModal.classList.remove('visible');
-}
+function closeModal() { codeModal.classList.remove('visible'); }
 
 function fallbackCopy(text) {
-  const textarea = document.createElement('textarea');
+  var textarea = document.createElement('textarea');
   textarea.value = text;
   textarea.style.position = 'fixed';
   textarea.style.opacity = '0';
@@ -1713,112 +1561,97 @@ function fallbackCopy(text) {
 // Layer tree building
 // ==============================
 function buildLayerTree(svgEl) {
-  let elementIndex = 0;
-
-  // Clear layer tree
+  var elementIndex = 0;
   while (layerTree.firstChild) layerTree.removeChild(layerTree.firstChild);
 
   function processNode(node, depth) {
-    const tag = node.tagName && node.tagName.toLowerCase();
+    var tag = node.tagName && node.tagName.toLowerCase();
     if (!tag) return;
-    if (['defs', 'metadata', 'title', 'desc', 'style'].includes(tag)) return;
-
-    const isGroup = tag === 'g';
-    const isElement = ['path', 'rect', 'circle', 'ellipse', 'polygon', 'polyline', 'line', 'text', 'image', 'use'].includes(tag);
-
+    if (['defs', 'metadata', 'title', 'desc', 'style'].indexOf(tag) >= 0) return;
+    var isGroup = tag === 'g';
+    var isElement = ['path', 'rect', 'circle', 'ellipse', 'polygon', 'polyline', 'line', 'text', 'image', 'use'].indexOf(tag) >= 0;
     if (!isGroup && !isElement) {
-      if (node.children) {
-        for (const child of node.children) processNode(child, depth);
-      }
+      if (node.children) { for (var i = 0; i < node.children.length; i++) processNode(node.children[i], depth); }
       return;
     }
-
-    const name = node.getAttribute('data-name') || node.getAttribute('id') || (isGroup ? 'Group' : tag);
+    var name = node.getAttribute('data-name') || node.getAttribute('id') || (isGroup ? 'Group' : tag);
 
     if (isGroup) {
-      const childCount = node.querySelectorAll('path, rect, circle, ellipse, polygon, polyline, line, text, image, use').length;
-
-      const item = document.createElement('div');
+      var childCount = node.querySelectorAll('path, rect, circle, ellipse, polygon, polyline, line, text, image, use').length;
+      var item = document.createElement('div');
       item.className = 'layer-item layer-item--group';
       item.dataset.index = '-1';
       item.dataset.depth = depth;
 
-      const toggleSpan = document.createElement('span');
+      var toggleSpan = document.createElement('span');
       toggleSpan.className = 'layer-toggle expanded';
-      const toggleSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      var toggleSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       toggleSvg.setAttribute('viewBox', '0 0 10 10');
       toggleSvg.setAttribute('fill', 'currentColor');
-      const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+      var polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
       polygon.setAttribute('points', '3,1 9,5 3,9');
       toggleSvg.appendChild(polygon);
       toggleSpan.appendChild(toggleSvg);
 
-      const nameSpan = document.createElement('span');
+      var nameSpan = document.createElement('span');
       nameSpan.className = 'layer-name';
       nameSpan.textContent = name;
-
-      const typeSpan = document.createElement('span');
+      var typeSpan = document.createElement('span');
       typeSpan.className = 'layer-type';
       typeSpan.textContent = childCount;
 
       item.appendChild(toggleSpan);
       item.appendChild(nameSpan);
       item.appendChild(typeSpan);
-
-      item.addEventListener('click', () => toggleGroup(item));
+      item.addEventListener('click', function() { toggleGroup(this); }.bind(item));
       layerTree.appendChild(item);
-
-      for (const child of node.children) processNode(child, depth + 1);
+      for (var c = 0; c < node.children.length; c++) processNode(node.children[c], depth + 1);
     } else if (isElement) {
-      const idx = elementIndex++;
-      const item = document.createElement('div');
-      item.className = 'layer-item' + (depth > 0 ? ' layer-item--child' : '');
-      item.dataset.index = idx;
-      item.style.paddingLeft = (16 + depth * 16) + 'px';
+      var idx = elementIndex++;
+      var elItem = document.createElement('div');
+      elItem.className = 'layer-item' + (depth > 0 ? ' layer-item--child' : '');
+      elItem.dataset.index = idx;
+      elItem.style.paddingLeft = (16 + depth * 16) + 'px';
+      var elName = document.createElement('span');
+      elName.className = 'layer-name';
+      elName.textContent = name;
+      var elType = document.createElement('span');
+      elType.className = 'layer-type';
+      elType.textContent = tag;
+      elItem.appendChild(elName);
+      elItem.appendChild(elType);
 
-      const nameSpan = document.createElement('span');
-      nameSpan.className = 'layer-name';
-      nameSpan.textContent = name;
+      (function(capturedIdx) {
+        elItem.addEventListener('mouseenter', function() {
+          var els = viewport.querySelectorAll('.svg-element-interactive');
+          if (els[capturedIdx]) hoverElement(els[capturedIdx]);
+        });
+        elItem.addEventListener('mouseleave', function() {
+          var els = viewport.querySelectorAll('.svg-element-interactive');
+          if (els[capturedIdx]) unhoverElement(els[capturedIdx]);
+        });
+        elItem.addEventListener('click', function(e) {
+          var els = viewport.querySelectorAll('.svg-element-interactive');
+          if (els[capturedIdx]) toggleSelectElement(els[capturedIdx], e.ctrlKey || e.metaKey || e.shiftKey);
+        });
+      })(idx);
 
-      const typeSpan = document.createElement('span');
-      typeSpan.className = 'layer-type';
-      typeSpan.textContent = tag;
-
-      item.appendChild(nameSpan);
-      item.appendChild(typeSpan);
-
-      item.addEventListener('mouseenter', () => {
-        const els = viewport.querySelectorAll('.svg-element-interactive');
-        if (els[idx]) hoverElement(els[idx]);
-      });
-      item.addEventListener('mouseleave', () => {
-        const els = viewport.querySelectorAll('.svg-element-interactive');
-        if (els[idx]) unhoverElement(els[idx]);
-      });
-      item.addEventListener('click', () => {
-        const els = viewport.querySelectorAll('.svg-element-interactive');
-        if (els[idx]) selectElement(els[idx]);
-      });
-
-      layerTree.appendChild(item);
+      layerTree.appendChild(elItem);
     }
   }
-
-  for (const child of svgEl.children) processNode(child, 0);
+  for (var i = 0; i < svgEl.children.length; i++) processNode(svgEl.children[i], 0);
   layerCountEl.textContent = elementIndex;
 }
 
 function toggleGroup(groupEl) {
-  const toggle = groupEl.querySelector('.layer-toggle');
-  const isExpanded = toggle.classList.contains('expanded');
+  var toggle = groupEl.querySelector('.layer-toggle');
+  var isExpanded = toggle.classList.contains('expanded');
   toggle.classList.toggle('expanded');
-
-  let sibling = groupEl.nextElementSibling;
-  const groupDepth = parseInt(groupEl.dataset.depth);
-
+  var sibling = groupEl.nextElementSibling;
+  var groupDepth = parseInt(groupEl.dataset.depth);
   while (sibling) {
-    const sibDepth = parseInt(sibling.dataset.depth || '0');
-    const isChildGroup = sibling.classList.contains('layer-item--group');
+    var sibDepth = parseInt(sibling.dataset.depth || '0');
+    var isChildGroup = sibling.classList.contains('layer-item--group');
     if (isChildGroup && sibDepth <= groupDepth) break;
     if (!isChildGroup && parseInt(sibling.style.paddingLeft) <= (16 + groupDepth * 16)) break;
     sibling.style.display = isExpanded ? 'none' : '';
@@ -1827,46 +1660,99 @@ function toggleGroup(groupEl) {
 }
 
 // ==============================
-// Pan & Zoom
+// Pan & Zoom & Marquee Selection
 // ==============================
-mainArea.addEventListener('wheel', (e) => {
+mainArea.addEventListener('wheel', function(e) {
   if (!currentSvgDoc) return;
   e.preventDefault();
-
-  const delta = e.deltaY > 0 ? 0.9 : 1.1;
-  const newZoom = Math.max(0.05, Math.min(20, zoom * delta));
-
-  const rect = container.getBoundingClientRect();
-  const mx = e.clientX - rect.left;
-  const my = e.clientY - rect.top;
-
+  var delta = e.deltaY > 0 ? 0.9 : 1.1;
+  var newZoom = Math.max(0.05, Math.min(20, zoom * delta));
+  var rect = container.getBoundingClientRect();
+  var mx = e.clientX - rect.left;
+  var my = e.clientY - rect.top;
   panX = mx - (mx - panX) * (newZoom / zoom);
   panY = my - (my - panY) * (newZoom / zoom);
   zoom = newZoom;
   updateViewport();
 }, { passive: false });
 
-mainArea.addEventListener('mousedown', (e) => {
-  if (e.button === 1 || (e.button === 0 && (e.target === container || e.target === mainArea || e.target.classList.contains('canvas-grid')))) {
+mainArea.addEventListener('mousedown', function(e) {
+  if (!currentSvgDoc) return;
+  if (e.button === 1) {
+    // Middle-click: always pan
     isPanning = true;
     panStartX = e.clientX - panX;
     panStartY = e.clientY - panY;
     viewport.style.cursor = 'grabbing';
     e.preventDefault();
+    return;
+  }
+  if (e.button === 0) {
+    var target = e.target;
+    var isOnSvgElement = target.classList && target.classList.contains('svg-element-interactive');
+    var isOnCanvas = target === container || target === mainArea || target.classList.contains('canvas-grid');
+    var isOnViewportSvg = viewport.contains(target) && !isOnSvgElement;
+
+    if (isOnCanvas || isOnViewportSvg) {
+      // Start marquee selection
+      isMarquee = true;
+      marqueeStartX = e.clientX;
+      marqueeStartY = e.clientY;
+      marqueeEl.style.left = e.clientX + 'px';
+      marqueeEl.style.top = e.clientY + 'px';
+      marqueeEl.style.width = '0';
+      marqueeEl.style.height = '0';
+      e.preventDefault();
+    }
   }
 });
 
-window.addEventListener('mousemove', (e) => {
+window.addEventListener('mousemove', function(e) {
   if (isPanning) {
     panX = e.clientX - panStartX;
     panY = e.clientY - panStartY;
     updateViewport();
   }
+  if (isMarquee) {
+    var x = Math.min(marqueeStartX, e.clientX);
+    var y = Math.min(marqueeStartY, e.clientY);
+    var w = Math.abs(e.clientX - marqueeStartX);
+    var h = Math.abs(e.clientY - marqueeStartY);
+    marqueeEl.style.left = x + 'px';
+    marqueeEl.style.top = y + 'px';
+    marqueeEl.style.width = w + 'px';
+    marqueeEl.style.height = h + 'px';
+    if (w > 3 || h > 3) {
+      marqueeEl.classList.add('active');
+    }
+  }
 });
 
-window.addEventListener('mouseup', () => {
-  isPanning = false;
-  viewport.style.cursor = '';
+window.addEventListener('mouseup', function(e) {
+  if (isPanning) {
+    isPanning = false;
+    viewport.style.cursor = '';
+  }
+  if (isMarquee) {
+    isMarquee = false;
+    var wasVisible = marqueeEl.classList.contains('active');
+    marqueeEl.classList.remove('active');
+
+    if (wasVisible) {
+      // Compute marquee rect in screen coords
+      var x = Math.min(marqueeStartX, e.clientX);
+      var y = Math.min(marqueeStartY, e.clientY);
+      var w = Math.abs(e.clientX - marqueeStartX);
+      var h = Math.abs(e.clientY - marqueeStartY);
+
+      if (w > 5 && h > 5) {
+        selectElementsInRect({ left: x, top: y, right: x + w, bottom: y + h });
+      }
+    } else {
+      // Tiny drag = just a click on empty area, deselect
+      deselectAll();
+    }
+  }
 });
 
 function updateViewport() {
@@ -1874,31 +1760,18 @@ function updateViewport() {
   document.getElementById('zoomDisplay').textContent = Math.round(zoom * 100) + '%';
 }
 
-function zoomIn() {
-  zoom = Math.min(20, zoom * 1.25);
-  updateViewport();
-}
-
-function zoomOut() {
-  zoom = Math.max(0.05, zoom * 0.8);
-  updateViewport();
-}
+function zoomIn() { zoom = Math.min(20, zoom * 1.25); updateViewport(); }
+function zoomOut() { zoom = Math.max(0.05, zoom * 0.8); updateViewport(); }
 
 function fitToView() {
-  const svgEl = viewport.querySelector('svg');
+  var svgEl = viewport.querySelector('svg');
   if (!svgEl) return;
-
-  const cRect = container.getBoundingClientRect();
-  const svgW = (svgEl.viewBox && svgEl.viewBox.baseVal && svgEl.viewBox.baseVal.width) ||
-               (svgEl.width && svgEl.width.baseVal && svgEl.width.baseVal.value) ||
-               parseFloat(svgEl.getAttribute('width')) || 800;
-  const svgH = (svgEl.viewBox && svgEl.viewBox.baseVal && svgEl.viewBox.baseVal.height) ||
-               (svgEl.height && svgEl.height.baseVal && svgEl.height.baseVal.value) ||
-               parseFloat(svgEl.getAttribute('height')) || 600;
-
-  const padding = 60;
-  const scaleX = (cRect.width - padding * 2) / svgW;
-  const scaleY = (cRect.height - padding * 2) / svgH;
+  var cRect = container.getBoundingClientRect();
+  var svgW = (svgEl.viewBox && svgEl.viewBox.baseVal && svgEl.viewBox.baseVal.width) || (svgEl.width && svgEl.width.baseVal && svgEl.width.baseVal.value) || parseFloat(svgEl.getAttribute('width')) || 800;
+  var svgH = (svgEl.viewBox && svgEl.viewBox.baseVal && svgEl.viewBox.baseVal.height) || (svgEl.height && svgEl.height.baseVal && svgEl.height.baseVal.value) || parseFloat(svgEl.getAttribute('height')) || 600;
+  var padding = 60;
+  var scaleX = (cRect.width - padding * 2) / svgW;
+  var scaleY = (cRect.height - padding * 2) / svgH;
   zoom = Math.min(scaleX, scaleY, 3);
   panX = (cRect.width - svgW * zoom) / 2;
   panY = (cRect.height - svgH * zoom) / 2;
@@ -1910,19 +1783,17 @@ function fitToView() {
 // ==============================
 function clearAll() {
   currentSvgDoc = null;
-  selectedElement = null;
+  selectedElements = [];
   hoveredElement = null;
   while (viewport.firstChild) viewport.removeChild(viewport.firstChild);
-
   while (layerTree.firstChild) layerTree.removeChild(layerTree.firstChild);
-  const placeholder = document.createElement('div');
+  var placeholder = document.createElement('div');
   placeholder.style.cssText = 'padding: 20px 16px; text-align: center;';
-  const p = document.createElement('p');
+  var p = document.createElement('p');
   p.style.cssText = 'color: var(--text-muted); font-size: 11px; line-height: 1.6;';
   p.textContent = 'Load a vector file to see layers here';
   placeholder.appendChild(p);
   layerTree.appendChild(placeholder);
-
   layerCountEl.textContent = '0';
   dropzone.classList.remove('hidden');
   container.style.display = 'none';
@@ -1938,12 +1809,10 @@ function clearAll() {
 function showToast(msg) {
   toastEl.textContent = msg;
   toastEl.classList.add('show');
-  setTimeout(() => toastEl.classList.remove('show'), 2500);
+  setTimeout(function() { toastEl.classList.remove('show'); }, 2500);
 }
 
-function showLoading(show) {
-  loadingOverlay.classList.toggle('visible', show);
-}
+function showLoading(show) { loadingOverlay.classList.toggle('visible', show); }
 </script>
 
 </body>
